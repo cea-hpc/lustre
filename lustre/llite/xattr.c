@@ -98,8 +98,7 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 		GOTO(out, rc = -EPERM);
 
 	/* b10667: ignore lustre special xattr for now */
-	if (!strcmp(name, "hsm") ||
-	    ((handler->flags == XATTR_TRUSTED_T && !strcmp(name, "lov")) ||
+	if (((handler->flags == XATTR_TRUSTED_T && !strcmp(name, "lov")) ||
 	     (handler->flags == XATTR_LUSTRE_T && !strcmp(name, "lov"))))
 		GOTO(out, rc = 0);
 

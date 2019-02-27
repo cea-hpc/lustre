@@ -566,7 +566,6 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
 		    strcmp(xattr_name, XATTR_NAME_FID) == 0 ||
 		    strcmp(xattr_name, XATTR_NAME_VERSION) == 0 ||
 		    strcmp(xattr_name, XATTR_NAME_SOM) == 0 ||
-		    strcmp(xattr_name, XATTR_NAME_HSM) == 0 ||
 		    strcmp(xattr_name, XATTR_NAME_LFSCK_NAMESPACE) == 0 ||
 		    (strcmp(xattr_name, XATTR_NAME_DEFAULT_LMV) == 0 &&
 		     !info->mti_mdt->mdt_enable_dmv_xattr))
