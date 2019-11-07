@@ -2913,6 +2913,32 @@ test_143() {
 }
 run_test 143 "orphan cleanup thread shouldn't be blocked even delete failed"
 
+test_138() {
+	remote_mds_nodsh && skip "remote MDS with nodsh"
+	[ $MDSCOUNT -lt 2 ] && skip "needs >= 2 MDTs" && return 0
+	[[ "$MDS1_VERSION" -ge $(version_code 2.12.9) ]] ||
+		skip "Need server version newer than 2.12.9"
+
+	zconf_umount_clients $CLIENTS $MOUNT
+
+#define OBD_FAIL_TGT_RECOVERY_CONNECT 0x724
+	#delay a first step of recovey when MDS waiting clients
+	#and failing to get osp logs
+	do_facet $SINGLEMDS $LCTL set_param fail_loc=0x724 fail_val=5
+
+	facet_failover $SINGLEMDS
+
+	#waiting failover and recovery timer
+	#the valuse is based on target_recovery_overseer() wait_event timeout
+	sleep 55
+	stop $SINGLEMDS || error "stop MDS failed"
+	do_facet $SINGLEMDS $LCTL set_param fail_loc=0
+	start $SINGLEMDS $(mdsdevname ${SINGLEMDS//mds/}) ||
+		error "start MDS failed"
+	zconf_mount_clients $CLIENTS $MOUNT
+}
+run_test 138 "Umount MDT during recovery"
+
 complete $SECONDS
 check_and_cleanup_lustre
 exit_status
