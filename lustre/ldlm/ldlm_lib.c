@@ -1261,7 +1261,11 @@ int target_handle_connect(struct ptlrpc_request *req)
                 rc = -EALREADY;
                 class_export_put(export);
                 export = NULL;
-        } else {
+	} else if (OBD_FAIL_PRECHECK(OBD_FAIL_TGT_RECOVERY_CONNECT) &&
+		   !lw_client) {
+		spin_unlock(&export->exp_lock);
+		rc = -EAGAIN;
+	} else {
 		export->exp_connecting = 1;
 		spin_unlock(&export->exp_lock);
 		LASSERT(export->exp_obd == target);
@@ -1859,7 +1863,8 @@ static void extend_recovery_timer(struct obd_device *obd, time_t dr_timeout,
 	time_t left;
 
 	spin_lock(&obd->obd_dev_lock);
-	if (!obd->obd_recovering || obd->obd_abort_recovery) {
+	if (!obd->obd_recovering || obd->obd_abort_recovery ||
+	    obd->obd_stopping) {
 		spin_unlock(&obd->obd_dev_lock);
 		return;
 	}
@@ -2360,7 +2365,7 @@ static int check_for_recovery_ready(struct lu_target *lut)
 
 	if (lut->lut_tdtd != NULL) {
 		if (!lut->lut_tdtd->tdtd_replay_ready &&
-		    !obd->obd_abort_recovery) {
+		    !obd->obd_abort_recovery && !obd->obd_stopping) {
 			/* Let's extend recovery timer, in case the recovery
 			 * timer expired, and some clients got evicted */
 			extend_recovery_timer(obd, obd->obd_recovery_timeout,
