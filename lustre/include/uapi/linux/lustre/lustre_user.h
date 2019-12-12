@@ -328,6 +328,12 @@ static inline bool fid_is_zero(const struct lu_fid *fid)
 	return fid->f_seq == 0 && fid->f_oid == 0;
 }
 
+/* The data name_to_handle_at() places in a struct file_handle (at f_handle) */
+struct lustre_file_handle {
+	struct lu_fid lfh_child;
+	struct lu_fid lfh_parent;
+};
+
 /* Currently, the filter_fid::ff_parent::f_ver is not the real parent
  * MDT-object's FID::f_ver, instead it is the OST-object index in its
  * parent MDT-object's layout EA. */
