@@ -104,11 +104,6 @@ struct inode *search_inode_for_lustre(struct super_block *sb,
         RETURN(inode);
 }
 
-struct lustre_nfs_fid {
-        struct lu_fid   lnf_child;
-        struct lu_fid   lnf_parent;
-};
-
 static struct dentry *
 ll_iget_for_nfs(struct super_block *sb, struct lu_fid *fid, struct lu_fid *parent)
 {
@@ -184,8 +179,9 @@ static int ll_encode_fh(struct inode *inode, __u32 *fh, int *plen,
 			struct inode *parent)
 {
 #endif
-	int fileid_len = sizeof(struct lustre_nfs_fid) / 4;
-	struct lustre_nfs_fid *nfs_fid = (void *)fh;
+	int fileid_len = sizeof(struct lustre_file_handle) / 4;
+	struct lustre_file_handle *lfh = (void *)fh;
+
 	ENTRY;
 
 	CDEBUG(D_INFO, "%s: encoding for ("DFID") maxlen=%d minlen=%d\n",
@@ -197,11 +193,11 @@ static int ll_encode_fh(struct inode *inode, __u32 *fh, int *plen,
 		RETURN(FILEID_INVALID);
 	}
 
-	nfs_fid->lnf_child = *ll_inode2fid(inode);
-	if (parent != NULL)
-		nfs_fid->lnf_parent = *ll_inode2fid(parent);
+	lfh->lfh_child = *ll_inode2fid(inode);
+	if (parent)
+		lfh->lfh_parent = *ll_inode2fid(parent);
 	else
-		fid_zero(&nfs_fid->lnf_parent);
+		fid_zero(&lfh->lfh_parent);
 	*plen = fileid_len;
 
 	RETURN(FILEID_LUSTRE);
@@ -280,23 +276,23 @@ out:
 static struct dentry *ll_fh_to_dentry(struct super_block *sb, struct fid *fid,
                                       int fh_len, int fh_type)
 {
-        struct lustre_nfs_fid *nfs_fid = (struct lustre_nfs_fid *)fid;
+	struct lustre_file_handle *lfh = (struct lustre_file_handle *)fid;
 
 	if (fh_type != FILEID_LUSTRE)
 		RETURN(ERR_PTR(-EPROTO));
 
-        RETURN(ll_iget_for_nfs(sb, &nfs_fid->lnf_child, &nfs_fid->lnf_parent));
+	RETURN(ll_iget_for_nfs(sb, &lfh->lfh_child, &lfh->lfh_parent));
 }
 
 static struct dentry *ll_fh_to_parent(struct super_block *sb, struct fid *fid,
                                       int fh_len, int fh_type)
 {
-        struct lustre_nfs_fid *nfs_fid = (struct lustre_nfs_fid *)fid;
+	struct lustre_file_handle *lfh = (struct lustre_file_handle *)fid;
 
 	if (fh_type != FILEID_LUSTRE)
 		RETURN(ERR_PTR(-EPROTO));
 
-        RETURN(ll_iget_for_nfs(sb, &nfs_fid->lnf_parent, NULL));
+	RETURN(ll_iget_for_nfs(sb, &lfh->lfh_parent, NULL));
 }
 
 int ll_dir_get_parent_fid(struct inode *dir, struct lu_fid *parent_fid)
