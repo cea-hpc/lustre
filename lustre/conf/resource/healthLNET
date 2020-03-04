@@ -59,12 +59,6 @@ the current number of lctl ping nodes the host can connect to.
 
 <parameters>
 
-<parameter name="pidfile" unique="0">
-<longdesc lang="en">PID file</longdesc>
-<shortdesc lang="en">PID file</shortdesc>
-<content type="string" default="$HA_VARRUN/ping-${OCF_RESOURCE_INSTANCE}" />
-</parameter>
-
 <parameter name="dampen" unique="0">
 <longdesc lang="en">
 The time to wait (dampening) further changes occur
@@ -196,44 +190,26 @@ ping_start() {
 	if [ $? =  $OCF_SUCCESS ]; then
 		return $OCF_SUCCESS
 	fi
-	touch ${OCF_RESKEY_pidfile}
 	ping_update
 }
 
 ping_stop() {
-	rm -f ${OCF_RESKEY_pidfile}
 	attrd_updater -D -n $OCF_RESKEY_name -d $OCF_RESKEY_dampen $attrd_options
 	return $OCF_SUCCESS
 }
 
 ping_monitor() {
-    if [ -f ${OCF_RESKEY_pidfile} ]; then
 	ping_update
-	if [ $? -eq 0 ]; then
-	    return $OCF_SUCCESS
-	fi
-	return $OCF_ERR_GENERIC
-    fi
-    return $OCF_NOT_RUNNING
+
+	case $? in
+		0) return $OCF_SUCCESS;;
+		1) return $OCF_ERR_GENERIC;;
+		2) return $OCF_NOT_RUNNING;;
+	esac
 }
 
 ping_validate() {
-	# Is the state directory writable?
-	state_dir=`dirname "$OCF_RESKEY_pidfile"`
-	touch "$state_dir/$$"
-	if [ $? != 0 ]; then
-		ocf_log err "Invalid location for 'state': $state_dir is not writable"
-		return $OCF_ERR_ARGS
-	fi
-	rm "$state_dir/$$"
-
-# Pidfile better be an absolute path
-    case $OCF_RESKEY_pidfile in
-	/*) ;;
-	*) ocf_log warn "You should use an absolute path for pidfile not: $OCF_RESKEY_pidfile" ;;
-    esac
-
-# Check the host list
+	# Check the host list
 	if [ "x" = "x$OCF_RESKEY_host_list" ]; then
 		ocf_log err "Empty host_list.  Please specify some nodes to ping"
 		exit $OCF_ERR_CONFIGURED
@@ -299,6 +275,7 @@ ping_update() {
 
 	CARRIER=/sys/class/net/$OCF_RESKEY_device/carrier
 	OPERSTATE=/sys/class/net/$OCF_RESKEY_device/operstate
+	LNET_IF=/sys/module/lnet/parameters/networks
 
 	CAR_STAT=$(cat $CARRIER)
 	OPER_STAT=$(cat $OPERSTATE)
@@ -306,17 +283,47 @@ ping_update() {
 	# debug
 	# ocf_log info "$CAR_STAT - $OPER_STAT"
 
+	lnet_active=0
+	active=0
 
-	if [ "$CAR_STAT" == "1" ] && [ "$OPER_STAT" == "up" ]; then
-		if [ ${OCF_RESKEY_lctl} = "true" ]; then
-			lctl_check
-			active=$?
-		else
-			ping_check
-			active=$?
-		fi
+	if [ ! -f $LNET_IF ];then
+		ocf_log err "LNET module not loaded"
 	else
-		active=0
+		LNET_IF_LST=$(cat $LNET_IF|tr "," " ")
+	        NB_LNET_IF=$(echo $LNET_IF_LST |wc -w)
+
+		for net in $LNET_IF_LST; do
+			lnet=$(echo $net|cut -d "(" -f1)
+			lnetctl_out=$(lnetctl net show --net $lnet |grep -q $lnet)
+			if [ $? -eq 0 ]; then
+				lnet_active=`expr $lnet_active + 1`
+				lnet_status=$(lnetctl net show --net $lnet|awk '/status/ {print $NF}')
+				ocf_log debug "$net $lnet_status"
+			else
+				ocf_log warn "$net $lnetctl_out"
+			fi
+		done
+
+		if [ $lnet_active -eq 0 ]; then
+			ocf_log err "No LNET interface up found for $LNET_IF_LST"
+		elif [ $lnet_active -eq $NB_LNET_IF ] ;then
+			ocf_log debug "All LNET interface are up"
+		else
+			ocf_log warn "All LNET interfaces are not up for $LNET_IF_LST"
+		fi
+
+		if [ "$CAR_STAT" == "1" ] && [ "$OPER_STAT" == "up" ]; then
+			if [ ${OCF_RESKEY_lctl} = "true" ]; then
+				lctl_check
+				active=$?
+			else
+				ping_check
+				active=$?
+			fi
+		else
+			ocf_log warn "Device $OCF_RESKEY_device carrier status: $CAR_STAT"
+			ocf_log warn "Operstate $OCF_RESKEY_device: $OPER_STAT"
+		fi
 	fi
 
 	# debug
@@ -330,14 +337,17 @@ ping_update() {
 		*) ocf_log warn "Could not update $OCF_RESKEY_name = $score: rc=$rc";;
 	esac
 	if [ $rc -ne 0 ]; then
-	    return $rc
+		return $rc
 	fi
 	if [ $score -eq 0 ]; then
-		 ocf_log err "LNet connection failed please check"
+		ocf_log err "LNet connection failed please check"
+		if [ $lnet_active -eq 0 ]; then
+			return 2
+		fi
 	fi
 	if [ -n "$OCF_RESKEY_failure_score" -a "$score" -lt "$OCF_RESKEY_failure_score" ]; then
-	    ocf_log warn "$OCF_RESKEY_name is less than failure_score($OCF_RESKEY_failure_score)"
-	    return 1
+		ocf_log warn "$OCF_RESKEY_name is less than failure_score($OCF_RESKEY_failure_score)"
+		return 1
 	fi
 	return 0
 }
@@ -377,12 +387,6 @@ if [ ${OCF_RESKEY_timeout} -lt 1 ]; then
 	elif [ ${OCF_RESKEY_timeout} -gt 1000 ]; then
 		# ping actually complains if this value is too high, 5 minutes is plenty
 		OCF_RESKEY_timeout=300
-fi
-
-if [ ${OCF_RESKEY_CRM_meta_globally_unique} = "false" ]; then
-	: ${OCF_RESKEY_pidfile:="$HA_VARRUN/ping-${OCF_RESKEY_name}"}
-else
-	: ${OCF_RESKEY_pidfile:="$HA_VARRUN/ping-${OCF_RESOURCE_INSTANCE}"}
 fi
 
 attrd_options='-q'
