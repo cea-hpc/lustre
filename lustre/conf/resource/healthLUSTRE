@@ -57,12 +57,6 @@ records (in the CIB) the current number of healthy lustre server
 
 <parameters>
 
-<parameter name="pidfile" unique="0">
-<longdesc lang="en">PID file</longdesc>
-<shortdesc lang="en">PID file</shortdesc>
-<content type="string" default="$HA_VARRUN/healthLUSTRE-${OCF_RESOURCE_INSTANCE}" />
-</parameter>
-
 <parameter name="dampen" unique="0">
 <longdesc lang="en">
 The time to wait (dampening) further changes occur
@@ -132,45 +126,53 @@ lustre_start() {
 	if [ $? =  $OCF_SUCCESS ]; then
 		return $OCF_SUCCESS
 	fi
-	touch ${OCF_RESKEY_pidfile}
 	lustre_update
 }
 
 lustre_stop() {
-	rm -f ${OCF_RESKEY_pidfile}
 	attrd_updater -D -n $OCF_RESKEY_name -d $OCF_RESKEY_dampen $attrd_options
 	return $OCF_SUCCESS
 }
 
 lustre_monitor() {
-	if [ -f ${OCF_RESKEY_pidfile} ]; then
-		lustre_update
-		if [ $? -eq 0 ]; then
-		    return $OCF_SUCCESS
-		fi
-		return $OCF_ERR_GENERIC
-	fi
-	return $OCF_NOT_RUNNING
+	lustre_update
+	case $? in
+		0) return $OCF_SUCCESS ;;
+		1) return $OCF_ERR_GENERIC ;;
+		2) return $OCF_NOT_RUNNING ;;
+	esac
 }
 
 
 lustre_check() {
-	active=0
-
 	# added head -1 due the LU-7486
-	l_out=`lctl get_param -n health_check | head -1 |grep -w healthy 2>&1`; rc=$?
+	l_out=`lctl get_param -n health_check 2>&1 | head -1 |grep -w healthy`; rc=$?
 
-	case $rc in
-	    0) active=`expr $active + 1`;;
-	    1) lustre_conditional_log warn "Lustre is not healthy: $l_out";;
-	    *) ocf_log err "Unexpected result for 'lctl get_param health_check' $rc: $l_out";;
-	esac
-	return $active
+	if [ $rc -ne 0 ] && [ ! -d /sys/fs/lustre ]; then
+		lustre_conditional_log warn "Lustre modules not loaded: $l_out"
+		return 2
+	elif [ $rc -eq 0 ]; then
+		lustre_conditional_log debug "Lustre is healthy"
+	elif [ $rc -eq 1 ]; then
+		lustre_conditional_log warn "Lustre is not healthy: $l_out"
+	else
+		ocf_log err "Unexpected result for 'lctl get_param health_check' $rc: $l_out"
+	fi
+
+	return $rc
 }
 
 lustre_update() {
+	active=0
+
 	lustre_check
-	active=$?
+	check_rc=$?
+
+	#keep compatibility previous resource revision
+	case $check_rc in
+		0) active=1;;
+		*) active=0;;
+	esac
 
 	attrd_updater -n $OCF_RESKEY_name -v $active -d $OCF_RESKEY_dampen $attrd_options
 	rc=$?
@@ -181,14 +183,9 @@ lustre_update() {
 	if [ $rc -ne 0 ]; then
 		return $rc
 	fi
-	return 0
-}
 
-if [ ${OCF_RESKEY_CRM_meta_globally_unique} = "false" ]; then
-	: ${OCF_RESKEY_pidfile:="$HA_VARRUN/healthLUSTRE-${OCF_RESKEY_name}"}
-else
-	: ${OCF_RESKEY_pidfile:="$HA_VARRUN/healthLUSTRE-${OCF_RESOURCE_INSTANCE}"}
-fi
+	return $check_rc
+}
 
 attrd_options='-q'
 if ocf_is_true ${OCF_RESKEY_debug} ; then
