@@ -623,6 +623,7 @@ struct obd_device {
 		obd_set_up:1,		/* finished setup */
 		obd_recovering:1,	/* there are recoverable clients */
 		obd_abort_recovery:1,	/* recovery expired */
+		obd_abort_recov_mdt:1,	/* only abort recovery between MDTs */
 		obd_version_recov:1,	/* obd uses version checking */
 		obd_replayable:1,	/* recovery enabled; inform clients */
 		obd_no_transno:1,	/* no committed-transno notification */

@@ -2017,7 +2017,7 @@ static int check_for_next_transno(struct lu_target *lut)
 		req_transno = lustre_msg_get_transno(req->rq_reqmsg);
 	}
 
-	if (tdtd != NULL)
+	if (!obd->obd_abort_recov_mdt && tdtd)
 		update_transno = distribute_txn_get_next_transno(tdtd);
 
 	connected = atomic_read(&obd->obd_connected_clients);
@@ -2037,7 +2037,7 @@ static int check_for_next_transno(struct lu_target *lut)
 	} else if (obd->obd_recovery_expired) {
 		CDEBUG(D_HA, "waking for expired recovery\n");
 		wake_up = 1;
-	} else if (tdtd != NULL && req != NULL &&
+	} else if (!obd->obd_abort_recov_mdt && tdtd && req &&
 		   is_req_replayed_by_update(req)) {
 		LASSERTF(req_transno < next_transno, "req_transno %llu"
 			 "next_transno%llu\n", req_transno, next_transno);
@@ -2148,7 +2148,7 @@ repeat:
 		/* Only abort the recovery if there are no update recovery
 		 * left in the queue */
 		spin_lock(&obd->obd_recovery_task_lock);
-		if (lut->lut_tdtd != NULL) {
+		if (!obd->obd_abort_recov_mdt && lut->lut_tdtd) {
 			next_update_transno =
 				distribute_txn_get_next_transno(lut->lut_tdtd);
 
@@ -2363,7 +2363,7 @@ static int check_for_recovery_ready(struct lu_target *lut)
 			return 0;
 	}
 
-	if (lut->lut_tdtd != NULL) {
+	if (!obd->obd_abort_recov_mdt && lut->lut_tdtd != NULL) {
 		if (!lut->lut_tdtd->tdtd_replay_ready &&
 		    !obd->obd_abort_recovery && !obd->obd_stopping) {
 			/* Let's extend recovery timer, in case the recovery
@@ -2411,7 +2411,7 @@ static __u64 get_next_transno(struct lu_target *lut, int *type)
 	if (type != NULL)
 		*type = REQUEST_RECOVERY;
 
-	if (tdtd == NULL)
+	if (!tdtd || obd->obd_abort_recov_mdt)
 		RETURN(transno);
 
 	update_transno = distribute_txn_get_next_transno(tdtd);

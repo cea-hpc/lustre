@@ -106,6 +106,7 @@ struct lustre_mount_data {
 #define LMD_FLG_UPDATE		0x2000	/* update parameters */
 #define LMD_FLG_HSM		0x4000	/* Start coordinator */
 #define LMD_FLG_DEV_RDONLY	0x8000	/* discard modification quitely */
+#define LMD_FLG_ABORT_RECOV_MDT	0x40000 /* Abort recovery between MDTs */
 
 #define lmd_is_client(x) ((x)->lmd_flags & LMD_FLG_CLIENT)
 
