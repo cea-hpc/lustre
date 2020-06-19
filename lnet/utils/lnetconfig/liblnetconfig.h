@@ -380,6 +380,12 @@ int lustre_lnet_show_max_intf(int seq_no, struct cYAML **show_rc,
 			      struct cYAML **err_rc);
 
 /*
+ * lustre_lnet_calc_cpt_of_nid
+ *	Return the cpt number of the NID provided
+ */
+int lustre_lnet_calc_cpt_of_nid(char *nidc, long int ncpts);
+
+/*
  * lustre_lnet_config_discovery
  *   Enable or disable peer discovery. Peer discovery is enabled by default.
  *
