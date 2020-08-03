@@ -4529,11 +4529,8 @@ static int ll_inode_revalidate(struct dentry *dentry, enum ldlm_intent_flags op)
 	 * do_lookup() -> ll_revalidate_it(). We cannot use d_drop
 	 * here to preserve get_cwd functionality on 2.6.
 	 * Bug 10503 */
-	if (!dentry->d_inode->i_nlink) {
-		ll_lock_dcache(inode);
-		d_lustre_invalidate(dentry, 0);
-		ll_unlock_dcache(inode);
-	}
+	if (!dentry->d_inode->i_nlink)
+		d_lustre_invalidate(dentry);
 
 	ll_lookup_finish_locks(&oit, dentry);
 out:

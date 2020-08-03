@@ -156,23 +156,39 @@ struct inode *ll_iget(struct super_block *sb, ino_t hash,
         RETURN(inode);
 }
 
-static void ll_invalidate_negative_children(struct inode *dir)
+/* mark negative sub file dentries invalid and prune unused dentries */
+static void ll_prune_negative_children(struct inode *dir)
 {
-	struct dentry *dentry, *tmp_subdir;
+	struct dentry *dentry;
+	struct dentry *child;
 	DECLARE_LL_D_HLIST_NODE_PTR(p);
 
+	ENTRY;
+
+restart:
 	ll_lock_dcache(dir);
 	ll_d_hlist_for_each_entry(dentry, p, &dir->i_dentry) {
 		spin_lock(&dentry->d_lock);
-		if (!list_empty(&dentry->d_subdirs)) {
-			struct dentry *child;
+		list_for_each_entry(child, &dentry->d_subdirs, d_child) {
+			if (child->d_inode)
+				continue;
 
-			list_for_each_entry_safe(child, tmp_subdir,
-						 &dentry->d_subdirs,
-						 d_child) {
-				if (child->d_inode == NULL)
-					d_lustre_invalidate(child, 1);
+			spin_lock_nested(&child->d_lock, DENTRY_D_LOCK_NESTED);
+			__d_lustre_invalidate(child);
+			if (!ll_d_count(child)) {
+				dget_dlock(child);
+				__d_drop(child);
+				spin_unlock(&child->d_lock);
+				spin_unlock(&dentry->d_lock);
+				ll_unlock_dcache(dir);
+
+				CDEBUG(D_DENTRY, "prune negative dentry %pd\n",
+				       child);
+
+				dput(child);
+				goto restart;
 			}
+			spin_unlock(&child->d_lock);
 		}
 		spin_unlock(&dentry->d_lock);
 	}
@@ -349,18 +365,18 @@ static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 							ll_test_inode_by_fid,
 							(void *)&lli->lli_pfid);
 			if (master_inode) {
-				ll_invalidate_negative_children(master_inode);
+				ll_prune_negative_children(master_inode);
 				iput(master_inode);
 			}
 		} else {
-			ll_invalidate_negative_children(inode);
+			ll_prune_negative_children(inode);
 		}
 	}
 
 	if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
 	    inode->i_sb->s_root != NULL &&
 	    inode != inode->i_sb->s_root->d_inode)
-		ll_invalidate_aliases(inode);
+		ll_prune_aliases(inode);
 
 	if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM))
 		forget_all_cached_acls(inode);

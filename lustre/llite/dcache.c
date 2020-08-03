@@ -233,7 +233,8 @@ void ll_intent_release(struct lookup_intent *it)
 	EXIT;
 }
 
-void ll_invalidate_aliases(struct inode *inode)
+/* mark aliases invalid and prune unused aliases */
+void ll_prune_aliases(struct inode *inode)
 {
 	struct dentry *dentry;
 	DECLARE_LL_D_HLIST_NODE_PTR(p);
@@ -245,15 +246,11 @@ void ll_invalidate_aliases(struct inode *inode)
 	       PFID(ll_inode2fid(inode)), inode);
 
 	ll_lock_dcache(inode);
-	ll_d_hlist_for_each_entry(dentry, p, &inode->i_dentry) {
-		CDEBUG(D_DENTRY, "dentry in drop %.*s (%p) parent %p "
-		       "inode %p flags %d\n", dentry->d_name.len,
-		       dentry->d_name.name, dentry, dentry->d_parent,
-		       dentry->d_inode, dentry->d_flags);
-
-		d_lustre_invalidate(dentry, 0);
-	}
+	ll_d_hlist_for_each_entry(dentry, p, &inode->i_dentry)
+		d_lustre_invalidate(dentry);
 	ll_unlock_dcache(inode);
+
+	d_prune_aliases(inode);
 
         EXIT;
 }
