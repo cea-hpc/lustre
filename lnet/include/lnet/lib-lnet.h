@@ -926,6 +926,7 @@ struct lnet_peer *lnet_find_peer(lnet_nid_t nid);
 void lnet_peer_net_added(struct lnet_net *net);
 lnet_nid_t lnet_peer_primary_nid_locked(lnet_nid_t nid);
 int lnet_discover_peer_locked(struct lnet_peer_ni *lpni, int cpt, bool block);
+void lnet_peer_queue_message(struct lnet_peer *lp, struct lnet_msg *msg);
 int lnet_peer_discovery_start(void);
 void lnet_peer_discovery_stop(void);
 void lnet_push_update_to_peers(int force);
@@ -993,6 +994,7 @@ lnet_peer_ni_is_primary(struct lnet_peer_ni *lpni)
 }
 
 bool lnet_peer_is_uptodate(struct lnet_peer *lp);
+bool lnet_peer_is_uptodate_locked(struct lnet_peer *lp);
 
 static inline bool
 lnet_peer_needs_push(struct lnet_peer *lp)

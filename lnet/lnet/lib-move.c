@@ -2575,28 +2575,54 @@ again:
 	peer = lpni->lpni_peer_net->lpn_peer;
 	if (lnet_msg_discovery(msg) && !lnet_peer_is_uptodate(peer)) {
 		lnet_nid_t primary_nid;
+		struct lnet_peer_ni *new_lpni;
+
 		rc = lnet_discover_peer_locked(lpni, cpt, false);
 		if (rc) {
 			lnet_peer_ni_decref_locked(lpni);
 			lnet_net_unlock(cpt);
 			return rc;
 		}
-		/* The peer may have changed. */
-		peer = lpni->lpni_peer_net->lpn_peer;
-		/* queue message and return */
-		msg->msg_rtr_nid_param = rtr_nid;
-		msg->msg_sending = 0;
+
+		new_lpni = lnet_find_peer_ni_locked(lpni->lpni_nid);
+		if (!new_lpni) {
+			lnet_peer_ni_decref_locked(lpni);
+			lnet_net_unlock(cpt);
+			return -ENOENT;
+		}
+
+		peer = new_lpni->lpni_peer_net->lpn_peer;
 		spin_lock(&peer->lp_lock);
-		list_add_tail(&msg->msg_list, &peer->lp_dc_pendq);
+		if (lpni != new_lpni || !lnet_peer_is_uptodate_locked(peer)) {
+			primary_nid = peer->lp_primary_nid;
+			spin_unlock(&peer->lp_lock);
+
+			/* Either the peer NI changed during discovery, or the
+			 * peer isn't up to date. In both cases we want to queue
+			 * the message on the (possibly new) peer's pending
+			 * queue and queue the peer for discovery
+			 */
+			msg->msg_rtr_nid_param = rtr_nid;
+			msg->msg_txpeer = NULL;
+			msg->msg_sending = 0;
+
+			lnet_net_unlock(cpt);
+			lnet_peer_queue_message(peer, msg);
+			lnet_net_lock(cpt);
+
+			lnet_peer_ni_decref_locked(lpni);
+			lnet_peer_ni_decref_locked(new_lpni);
+			lnet_net_unlock(cpt);
+
+			CDEBUG(D_NET, "%s pending discovery\n",
+			       libcfs_nid2str(primary_nid));
+
+			return LNET_DC_WAIT;
+		}
+
+		/* The peer NI did not change and the peer is up to date. */
 		spin_unlock(&peer->lp_lock);
-		lnet_peer_ni_decref_locked(lpni);
-		primary_nid = peer->lp_primary_nid;
-		lnet_net_unlock(cpt);
-
-		CDEBUG(D_NET, "%s pending discovery\n",
-		       libcfs_nid2str(primary_nid));
-
-		return LNET_DC_WAIT;
+		lnet_peer_ni_decref_locked(new_lpni);
 	}
 	lnet_peer_ni_decref_locked(lpni);
 
