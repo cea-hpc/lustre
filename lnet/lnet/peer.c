@@ -1137,6 +1137,16 @@ LNetPrimaryNID(lnet_nid_t nid)
 		rc = lnet_discover_peer_locked(lpni, cpt, true);
 		if (rc)
 			goto out_decref;
+		/* The lpni (or lp) for this NID may have changed and our ref is
+		 * the only thing keeping the old one around. Release the ref
+		 * and lookup the lpni again
+		 */
+		lnet_peer_ni_decref_locked(lpni);
+		lpni = lnet_find_peer_ni_locked(nid);
+		if (!lpni) {
+			rc = -ENOENT;
+			goto out_unlock;
+		}
 		lp = lpni->lpni_peer_net->lpn_peer;
 
 		/* Only try once if discovery is disabled */
@@ -1765,7 +1775,6 @@ lnet_peer_is_uptodate(struct lnet_peer *lp)
  */
 bool
 lnet_peer_is_uptodate_locked(struct lnet_peer *lp)
-__must_hold(&lp->lp_lock)
 {
 	bool rc;
 
@@ -1787,6 +1796,26 @@ __must_hold(&lp->lp_lock)
 	}
 
 	return rc;
+}
+
+/* Add the message to the peer's lp_dc_pendq and queue the peer for discovery */
+void
+lnet_peer_queue_message(struct lnet_peer *lp, struct lnet_msg *msg)
+{
+	/* The discovery thread holds net_lock/EX and lp_lock when it splices
+	 * the lp_dc_pendq onto a local list for resending. Thus, we do the same
+	 * when adding to the list and queuing the peer to ensure that we do not
+	 * strand any messages on the lp_dc_pendq. This scheme ensures the
+	 * message will be resent even if the peer is already being discovered.
+	 * Therefore we needn't check the return value of
+	 * lnet_peer_queue_for_discovery(lp).
+	 */
+	lnet_net_lock(LNET_LOCK_EX);
+	spin_lock(&lp->lp_lock);
+	list_add_tail(&msg->msg_list, &lp->lp_dc_pendq);
+	spin_unlock(&lp->lp_lock);
+	lnet_peer_queue_for_discovery(lp);
+	lnet_net_unlock(LNET_LOCK_EX);
 }
 
 /*
