@@ -611,6 +611,7 @@ check_obd_connect_data(void)
 	CHECK_DEFINE_64X(OBD_CONNECT2_ENCRYPT);
 	CHECK_DEFINE_64X(OBD_CONNECT2_FIDMAP);
 	CHECK_DEFINE_64X(OBD_CONNECT2_GETATTR_PFID);
+	CHECK_DEFINE_64X(OBD_CONNECT2_LSEEK);
 
 	CHECK_VALUE_X(OBD_CKSUM_CRC32);
 	CHECK_VALUE_X(OBD_CKSUM_ADLER);
@@ -1092,7 +1093,7 @@ check_mdt_body(void)
 	CHECK_MEMBER(mdt_body, mbo_projid);
 	CHECK_MEMBER(mdt_body, mbo_dom_size);
 	CHECK_MEMBER(mdt_body, mbo_dom_blocks);
-	CHECK_MEMBER(mdt_body, mbo_padding_8);
+	CHECK_MEMBER(mdt_body, mbo_btime);
 	CHECK_MEMBER(mdt_body, mbo_padding_9);
 	CHECK_MEMBER(mdt_body, mbo_padding_10);
 
@@ -2641,6 +2642,8 @@ main(int argc, char **argv)
 	CHECK_VALUE(OST_QUOTACTL);
 	CHECK_VALUE(OST_QUOTA_ADJUST_QUNIT);
 	CHECK_VALUE(OST_LADVISE);
+	CHECK_VALUE(OST_FALLOCATE);
+	CHECK_VALUE(OST_SEEK);
 	CHECK_VALUE(OST_LAST_OPC);
 
 	CHECK_DEFINE_64X(OBD_OBJECT_EOF);
