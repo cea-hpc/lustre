@@ -1030,8 +1030,7 @@ static int osd_check_lmv(struct osd_thread_info *oti, struct osd_device *dev,
 {
 	struct lu_buf *buf = &oti->oti_big_buf;
 	struct dentry *dentry = &oti->oti_obj_dentry;
-	struct file *filp = &oti->oti_file;
-	const struct file_operations *fops;
+	struct file *filp;
 	struct lmv_mds_md_v1 *lmv1;
 	struct osd_check_lmv_buf oclb = {
 #ifdef HAVE_DIR_CONTEXT
@@ -1077,16 +1076,7 @@ again:
 	if (le32_to_cpu(lmv1->lmv_magic) != LMV_MAGIC_V1)
 		GOTO(out, rc = 0);
 
-	fops = inode->i_fop;
-	dentry->d_inode = inode;
-	dentry->d_sb = inode->i_sb;
-	filp->f_pos = 0;
-	filp->f_path.dentry = dentry;
-	filp->f_mode = FMODE_64BITHASH;
-	filp->f_mapping = inode->i_mapping;
-	filp->f_op = fops;
-	filp->private_data = NULL;
-	set_file_inode(filp, inode);
+	filp = osd_quasi_file(oti->oti_env, inode);
 
 	do {
 		oclb.oclb_items = 0;
@@ -1099,11 +1089,11 @@ again:
 #endif
 		filp->f_pos = oclb.ctx.pos;
 #else
-		rc = fops->readdir(filp, &oclb, osd_stripe_dir_filldir);
+		rc = inode->i_fop->readdir(filp, &oclb, osd_stripe_dir_filldir);
 #endif
 	} while (rc >= 0 && oclb.oclb_items > 0 && !oclb.oclb_found &&
 		 filp->f_pos != LDISKFS_HTREE_EOF_64BIT);
-	fops->release(inode, filp);
+	inode->i_fop->release(inode, filp);
 
 out:
 	if (rc < 0)
@@ -4884,19 +4874,10 @@ static int osd_object_sync(const struct lu_env *env, struct dt_object *dt,
 {
 	struct osd_object *obj = osd_dt_obj(dt);
 	struct inode *inode = obj->oo_inode;
-	struct osd_thread_info *info = osd_oti_get(env);
-	struct dentry *dentry = &info->oti_obj_dentry;
-	struct file *file = &info->oti_file;
+	struct file *file = osd_quasi_file(env, inode);
 	int rc;
 
 	ENTRY;
-
-	dentry->d_inode = inode;
-	dentry->d_sb = inode->i_sb;
-	file->f_path.dentry = dentry;
-	file->f_mapping = inode->i_mapping;
-	file->f_op = inode->i_fop;
-	set_file_inode(file, inode);
 
 	rc = ll_vfs_fsync_range(file, start, end, 0);
 

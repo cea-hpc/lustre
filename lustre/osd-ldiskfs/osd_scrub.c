@@ -2264,28 +2264,23 @@ static int
 osd_ios_general_scan(struct osd_thread_info *info, struct osd_device *dev,
 		     struct dentry *dentry, filldir_t filldir)
 {
-	struct osd_ios_filldir_buf    buf   = {
+	struct osd_ios_filldir_buf buf = {
 #ifdef HAVE_DIR_CONTEXT
-						.ctx.actor = filldir,
+		.ctx.actor = filldir,
 #endif
-						.oifb_info = info,
-						.oifb_dev = dev,
-						.oifb_dentry = dentry };
-	struct file		     *filp  = &info->oti_file;
-	struct inode		     *inode = dentry->d_inode;
-	const struct file_operations *fops  = inode->i_fop;
-	int			      rc;
+		.oifb_info = info,
+		.oifb_dev = dev,
+		.oifb_dentry = dentry
+	};
+	struct file *filp;
+	struct inode *inode = dentry->d_inode;
+	int rc;
+
 	ENTRY;
 
 	LASSERT(filldir != NULL);
 
-	filp->f_pos = 0;
-	filp->f_path.dentry = dentry;
-	filp->f_mode = FMODE_64BITHASH;
-	filp->f_mapping = inode->i_mapping;
-	filp->f_op = fops;
-	filp->private_data = NULL;
-	set_file_inode(filp, inode);
+	filp = osd_quasi_file_by_dentry(info->oti_env, dentry);
 
 	do {
 		buf.oifb_items = 0;
@@ -2298,11 +2293,11 @@ osd_ios_general_scan(struct osd_thread_info *info, struct osd_device *dev,
 #endif
 		filp->f_pos = buf.ctx.pos;
 #else
-		rc = fops->readdir(filp, &buf, filldir);
+		rc = inode->i_fop->readdir(filp, &buf, filldir);
 #endif
 	} while (rc >= 0 && buf.oifb_items > 0 &&
 		 filp->f_pos != LDISKFS_HTREE_EOF_64BIT);
-	fops->release(inode, filp);
+	inode->i_fop->release(inode, filp);
 
 	RETURN(rc);
 }
