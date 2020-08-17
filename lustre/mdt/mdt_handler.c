@@ -5199,6 +5199,7 @@ TGT_OST_HDL_HP(HABEO_CORPUS | HABEO_REFERO | MUTABOR,
 					 OST_PUNCH,	mdt_punch_hdl,
 					 		mdt_hp_punch),
 TGT_OST_HDL(HABEO_CORPUS | HABEO_REFERO, OST_SYNC,	mdt_data_sync),
+TGT_OST_HDL(HABEO_CORPUS | HABEO_REFERO, OST_SEEK, tgt_lseek),
 };
 
 static struct tgt_handler mdt_sec_ctx_ops[] = {
@@ -6028,6 +6029,9 @@ static int mdt_connect_internal(const struct lu_env *env,
 		       "OBD_CONNECT_CKSUM, CRC32 will be used\n",
 		       exp->exp_obd->obd_name, obd_export_nid2str(exp));
 	}
+
+	if (!mdt->mdt_lut.lut_dt_conf.ddp_has_lseek_data_hole)
+		data->ocd_connect_flags2 &= ~OBD_CONNECT2_LSEEK;
 
 	return 0;
 }

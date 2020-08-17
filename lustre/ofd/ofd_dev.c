@@ -985,7 +985,7 @@ static int ofd_lock_unlock_region(const struct lu_env *env,
 		return rc;
 
 	CDEBUG(D_OTHER, "ost lock [%llu,%llu], lh=%p\n", begin, end, &lh);
-	tgt_extent_unlock(&lh, LCK_PR);
+	tgt_data_unlock(&lh, LCK_PR);
 
 	return 0;
 }
@@ -1271,7 +1271,7 @@ static int ofd_getattr_hdl(struct tgt_session_info *tsi)
 	ofd_object_put(tsi->tsi_env, fo);
 out:
 	if (srvlock)
-		tgt_extent_unlock(&lh, lock_mode);
+		tgt_data_unlock(&lh, lock_mode);
 
 	ofd_counter_incr(tsi->tsi_exp, LPROC_OFD_STATS_GETATTR,
 			 tsi->tsi_jobid, 1);
@@ -2025,7 +2025,7 @@ out_put:
 	ofd_object_put(tsi->tsi_env, fo);
 out:
 	if (srvlock)
-		tgt_extent_unlock(&lh, LCK_PW);
+		tgt_data_unlock(&lh, LCK_PW);
 	if (rc == 0) {
 		/* we do not call this before to avoid lu_object_find() in
 		 *  ->lvbo_update() holding another reference on the object.
@@ -2214,7 +2214,7 @@ static int ofd_ladvise_hdl(struct tgt_session_info *tsi)
 			req->rq_status = ofd_ladvise_prefetch(env, fo,
 							      tbc->local,
 							      start, end, dbt);
-			tgt_extent_unlock(&lockh, LCK_PR);
+			tgt_data_unlock(&lockh, LCK_PR);
 			break;
 		case LU_LADVISE_DONTNEED:
 			rc = dt_ladvise(env, dob, ladvise->lla_start,
@@ -2741,6 +2741,7 @@ TGT_OST_HDL_HP(HABEO_CORPUS| HABEO_REFERO | MUTABOR,
 TGT_OST_HDL(HABEO_CORPUS| HABEO_REFERO,	OST_SYNC,	ofd_sync_hdl),
 TGT_OST_HDL(0		| HABEO_REFERO,	OST_QUOTACTL,	ofd_quotactl),
 TGT_OST_HDL(HABEO_CORPUS | HABEO_REFERO, OST_LADVISE,	ofd_ladvise_hdl),
+TGT_OST_HDL(HABEO_CORPUS | HABEO_REFERO, OST_SEEK, tgt_lseek),
 };
 
 static struct tgt_opc_slice ofd_common_slice[] = {

@@ -966,7 +966,7 @@ out_put:
 	lu_object_put(tsi->tsi_env, &mo->mot_obj);
 out_unlock:
 	if (srvlock)
-		tgt_extent_unlock(&lh, LCK_PW);
+		tgt_data_unlock(&lh, LCK_PW);
 out:
 	mdt_thread_info_fini(info);
 	return rc;
@@ -1403,7 +1403,7 @@ int mdt_data_version_get(struct tgt_session_info *tsi)
 	rc = 0;
 out:
 	if (srvlock)
-		tgt_mdt_data_unlock(&lh, lock_mode);
+		tgt_data_unlock(&lh, lock_mode);
 
 	repbody->mbo_valid |= OBD_MD_FLFLAGS;
 	repbody->mbo_flags = OBD_FL_FLUSH;
