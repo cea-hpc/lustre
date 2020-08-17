@@ -2429,6 +2429,34 @@ static int osd_ladvise(const struct lu_env *env, struct dt_object *dt,
 	RETURN(rc);
 }
 
+static loff_t osd_lseek(const struct lu_env *env, struct dt_object *dt,
+			loff_t offset, int whence)
+{
+	struct osd_object *obj = osd_dt_obj(dt);
+	struct inode *inode = obj->oo_inode;
+	struct file *file;
+	loff_t result;
+
+	ENTRY;
+
+	LASSERT(dt_object_exists(dt));
+	LASSERT(osd_invariant(obj));
+	LASSERT(inode);
+
+	file = osd_quasi_file(env, inode);
+	result = file->f_op->llseek(file, offset, whence);
+	/* when result is out of file range then it must be virtual hole
+	 * at the end of file, but this is not real file end, so return
+	 * just -ENXIO and LOV will merge all results
+	 */
+	if (result == i_size_read(inode))
+		result = -ENXIO;
+
+	CDEBUG(D_INFO, "seek %s from %lld: %lld\n", whence == SEEK_HOLE ?
+		       "hole" : "data", offset, result);
+	RETURN(result);
+}
+
 /*
  * in some cases we may need declare methods for objects being created
  * e.g., when we create symlink
@@ -2451,6 +2479,7 @@ const struct dt_body_operations osd_body_ops = {
 	.dbo_punch			= osd_punch,
 	.dbo_fiemap_get			= osd_fiemap_get,
 	.dbo_ladvise			= osd_ladvise,
+	.dbo_lseek			= osd_lseek,
 };
 
 /**
