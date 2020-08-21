@@ -233,6 +233,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 				   OBD_CONNECT2_ARCHIVE_ID_ARRAY |
 				   OBD_CONNECT2_LSOM |
 				   OBD_CONNECT2_ASYNC_DISCARD |
+				   OBD_CONNECT2_LSEEK |
 				   OBD_CONNECT2_GETATTR_PFID;
 
 #ifdef HAVE_LRU_RESIZE_SUPPORT
@@ -440,7 +441,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 	data->ocd_connect_flags |= OBD_CONNECT_LOCKAHEAD_OLD;
 #endif
 
-	data->ocd_connect_flags2 = OBD_CONNECT2_LOCKAHEAD;
+	data->ocd_connect_flags2 = OBD_CONNECT2_LOCKAHEAD | OBD_CONNECT2_LSEEK;
 
 	if (!OBD_FAIL_CHECK(OBD_FAIL_OSC_CONNECT_GRANT_PARAM))
 		data->ocd_connect_flags |= OBD_CONNECT_GRANT_PARAM;
