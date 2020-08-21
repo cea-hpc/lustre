@@ -5214,39 +5214,32 @@ test_104() {
 }
 run_test 104 "Verify that MDS stores atime/mtime/ctime during close"
 
-test_113 () {
-	(( MDS1_VERSION >= $(version_code 2.12.10) )) ||
-		skip "Need server version at least 2.12.10"
+test_108a() {
+	local offset
 
-	local instance
-	local nid
+	$LFS setstripe -E 1M -c 1 -E -1 $DIR1/$tfile ||
+		error "Create $DIR1/$tfile failed"
 
-	instance=$($LFS getname $DIR1 | sed -r -e "s#.*-([^ ]+).*#\1#g") ||
-		error "cannot get instance of $DIR1"
+	dd if=/dev/zero of=$DIR1/$tfile bs=10000 count=1 ||
+		error "dd $DIR1/$tfile failed"
+	offset=$(lseek_test -d 5000 $DIR2/$tfile)
+	[[ $offset == 5000 ]] || error "offset $offset != 5000"
 
-	$LFS check osts $DIR1 | grep $instance ||
-		error "cannot find OSTs of instance $instance"
+	$TRUNCATE $DIR1/$tfile 2000
+	offset=$(lseek_test -l 1000 $DIR2/$tfile)
+	[[ $offset == 2000 ]] || error "offset $offset != 2000"
 
-	$LFS check osts $DIR1 | grep -v $instance
-	if (( $? == 0 )); then
-		error "find OSTs other than instance $instance"
-	fi
+	#define OBD_FAIL_OSC_DELAY_IO 0x414
+	$LCTL set_param fail_val=4 fail_loc=0x80000414
+	dd if=/dev/zero of=$DIR1/$tfile count=1 bs=8M conv=notrunc oflag=dsync &
+	local pid=$!
+	sleep 2
 
-	$LFS check osts | grep $instance ||
-		error "cannot find other OSTs"
-
-	nid=$(df $DIR2 | tail -1 | sed 's%:/.*%%') ||
-		error "cannot parse nid for $DIR2"
-
-	$LFS check mgts $DIR2 | grep MGC$nid ||
-		error "cannot find mgc of $nid"
-
-	$LFS check mgts $DIR2 | grep -v MGC$nid
-	if (( $? == 0 )); then
-		error "find MGTs other than nid $nid"
-	fi
+	offset=$(lseek_test -l 8000 $DIR2/$tfile)
+	wait $pid
+	[[ $offset == 8388608 ]] || error "offset $offset != 8388608"
 }
-run_test 113 "check servers of specified fs"
+run_test 108a "lseek: parallel updates"
 
 log "cleanup: ======================================================"
 
