@@ -471,6 +471,11 @@ static inline int exp_connect_sepol(struct obd_export *exp)
 	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_SELINUX_POLICY);
 }
 
+static inline int exp_connect_lseek(struct obd_export *exp)
+{
+	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_LSEEK);
+}
+
 enum {
 	/* archive_ids in array format */
 	KKUC_CT_DATA_ARRAY_MAGIC	= 0x092013cea,

@@ -5238,6 +5238,33 @@ test_107() { # LU-1031
 }
 run_test 107 "Basic grouplock conflict"
 
+test_108a() {
+	local offset
+
+	$LFS setstripe -E 1M -c 1 -E -1 $DIR1/$tfile ||
+		error "Create $DIR1/$tfile failed"
+
+	dd if=/dev/zero of=$DIR1/$tfile bs=10000 count=1 ||
+		error "dd $DIR1/$tfile failed"
+	offset=$(lseek_test -d 5000 $DIR2/$tfile)
+	[[ $offset == 5000 ]] || error "offset $offset != 5000"
+
+	$TRUNCATE $DIR1/$tfile 2000
+	offset=$(lseek_test -l 1000 $DIR2/$tfile)
+	[[ $offset == 2000 ]] || error "offset $offset != 2000"
+
+	#define OBD_FAIL_OSC_DELAY_IO 0x414
+	$LCTL set_param fail_val=4 fail_loc=0x80000414
+	dd if=/dev/zero of=$DIR1/$tfile count=1 bs=8M conv=notrunc oflag=dsync &
+	local pid=$!
+	sleep 2
+
+	offset=$(lseek_test -l 8000 $DIR2/$tfile)
+	wait $pid
+	[[ $offset == 8388608 ]] || error "offset $offset != 8388608"
+}
+run_test 108a "lseek: parallel updates"
+
 test_113 () {
 	(( MDS1_VERSION >= $(version_code 2.12.10) )) ||
 		skip "Need server version at least 2.12.10"
