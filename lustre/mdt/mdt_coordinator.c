@@ -587,7 +587,31 @@ static int set_cdt_state(struct coordinator *cdt, enum cdt_states new_state)
 	return rc;
 }
 
+static int mdt_hsm_pending_restore(struct mdt_thread_info *mti);
 
+static void cdt_start_pending_restore(struct mdt_device *mdt,
+				      struct coordinator *cdt)
+{
+	struct mdt_thread_info *cdt_mti;
+	unsigned int i = 0;
+	int rc;
+
+	/* wait until MDD initialize hsm actions llog */
+	while (!test_bit(MDT_FL_CFGLOG, &mdt->mdt_state) && i < obd_timeout) {
+		schedule_timeout_interruptible(cfs_time_seconds(1));
+		i++;
+	}
+	if (!test_bit(MDT_FL_CFGLOG, &mdt->mdt_state))
+		CWARN("%s: trying to init HSM before MDD\n", mdt_obd_name(mdt));
+
+	/* set up list of started restore requests */
+	cdt_mti = lu_context_key_get(&cdt->cdt_env.le_ctx, &mdt_thread_key);
+	rc = mdt_hsm_pending_restore(cdt_mti);
+	if (rc)
+		CERROR("%s: cannot take the layout locks needed for registered restore: %d\n",
+		       mdt_obd_name(mdt), rc);
+
+}
 
 /**
  * coordinator thread
@@ -617,6 +641,7 @@ static int mdt_coordinator(void *data)
 
 	/* Inform mdt_hsm_cdt_start(). */
 	wake_up_all(&cdt->cdt_waitq);
+	cdt_start_pending_restore(mdt, cdt);
 
 	while (1) {
 		int i;
@@ -1122,11 +1147,11 @@ int  mdt_hsm_cdt_fini(struct mdt_device *mdt)
  */
 static int mdt_hsm_cdt_start(struct mdt_device *mdt)
 {
-	struct coordinator	*cdt = &mdt->mdt_coordinator;
+	struct coordinator *cdt = &mdt->mdt_coordinator;
 	struct mdt_thread_info *cdt_mti;
-	int			 rc;
-	void			*ptr;
-	struct task_struct	*task;
+	int rc;
+	void *ptr;
+	struct task_struct *task;
 	ENTRY;
 
 	/* functions defined but not yet used
@@ -1156,19 +1181,12 @@ static int mdt_hsm_cdt_start(struct mdt_device *mdt)
 	cdt->cdt_other_request_mask = (1UL << HSMA_RESTORE);
 
 	/* to avoid deadlock when start is made through /proc
-	 * /proc entries are created by the coordinator thread */
-
-	/* set up list of started restore requests */
-	cdt_mti = lu_context_key_get(&cdt->cdt_env.le_ctx, &mdt_thread_key);
-	rc = mdt_hsm_pending_restore(cdt_mti);
-	if (rc)
-		CERROR("%s: cannot take the layout locks needed"
-		       " for registered restore: %d\n",
-		       mdt_obd_name(mdt), rc);
-
+	 * sysfs entries are created by the coordinator thread
+	 */
 	if (mdt->mdt_bottom->dd_rdonly)
 		RETURN(0);
 
+	cdt_mti = lu_context_key_get(&cdt->cdt_env.le_ctx, &mdt_thread_key);
 	task = kthread_run(mdt_coordinator, cdt_mti, "hsm_cdtr");
 	if (IS_ERR(task)) {
 		rc = PTR_ERR(task);
