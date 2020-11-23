@@ -529,6 +529,9 @@ int llapi_lease_put(int fd); /* obsoleted */
 int llapi_group_lock(int fd, int gid);
 int llapi_group_unlock(int fd, int gid);
 
+bool llapi_file_is_sparse(int fd);
+off_t llapi_data_seek(int src_fd, off_t offset, size_t *length);
+
 /* Ladvise */
 int llapi_ladvise(int fd, unsigned long long flags, int num_advise,
 		  struct llapi_lu_ladvise *ladvise);
@@ -1030,7 +1033,8 @@ ssize_t llapi_mirror_read(int fd, unsigned int id,
 			   void *buf, size_t count, off_t pos);
 ssize_t llapi_mirror_copy_many(int fd, __u16 src, __u16 *dst, size_t count);
 int llapi_mirror_copy(int fd, unsigned int src, unsigned int dst,
-		       off_t pos, size_t count);
+		      off_t pos, size_t count);
+off_t llapi_mirror_data_seek(int fd, unsigned int id, off_t pos, size_t *size);
 
 int llapi_param_get_paths(const char *pattern, glob_t *paths);
 int llapi_param_get_value(const char *path, char **buf, size_t *buflen);
