@@ -105,7 +105,9 @@ liblustreapi_la_SOURCES = liblustreapi.c liblustreapi_hsm.c \
 			  liblustreapi_lease.c liblustreapi_util.c \
 			  liblustreapi_kernelconn.c liblustreapi_param.c \
 			  liblustreapi_mirror.c liblustreapi_root.c \
-			  liblustreapi_ladvise.c liblustreapi_chlg.c
+			  liblustreapi_ladvise.c liblustreapi_chlg.c \
+			  liblustreapi_lseek.c
+
 liblustreapi_la_LDFLAGS = $(LIBREADLINE) -version-info 1:0:0 \
 			  -Wl,--version-script=liblustreapi.map
 liblustreapi_la_LIBADD = $(top_builddir)/libcfs/libcfs/libcfs.la \

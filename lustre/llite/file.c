@@ -3794,8 +3794,9 @@ generic_file_llseek_size(struct file *file, loff_t offset, int origin,
 }
 #endif
 
-loff_t ll_lseek(struct inode *inode, loff_t offset, int whence)
+loff_t ll_lseek(struct file *file, loff_t offset, int whence)
 {
+	struct inode *inode = file_inode(file);
 	struct lu_env *env;
 	struct cl_io *io;
 	struct cl_lseek_io *lsio;
@@ -3811,6 +3812,7 @@ loff_t ll_lseek(struct inode *inode, loff_t offset, int whence)
 
 	io = vvp_env_thread_io(env);
 	io->ci_obj = ll_i2info(inode)->lli_clob;
+	ll_io_set_mirror(io, file);
 
 	lsio = &io->u.ci_lseek;
 	lsio->ls_start = offset;
@@ -3819,10 +3821,14 @@ loff_t ll_lseek(struct inode *inode, loff_t offset, int whence)
 
 	do {
 		rc = cl_io_init(env, io, CIT_LSEEK, io->ci_obj);
-		if (!rc)
+		if (!rc) {
+			struct vvp_io *vio = vvp_env_io(env);
+
+			vio->vui_fd = file->private_data;
 			rc = cl_io_loop(env, io);
-		else
+		} else {
 			rc = io->ci_result;
+		}
 		retval = rc ? : lsio->ls_result;
 		cl_io_fini(env, io);
 	} while (unlikely(io->ci_need_restart));
@@ -3859,7 +3865,7 @@ static loff_t ll_file_seek(struct file *file, loff_t offset, int origin)
 		cl_sync_file_range(inode, offset, OBD_OBJECT_EOF,
 				   CL_FSYNC_LOCAL, 0);
 
-		retval = ll_lseek(inode, offset, origin);
+		retval = ll_lseek(file, offset, origin);
 		if (retval < 0)
 			return retval;
 		retval = vfs_setpos(file, retval, ll_file_maxbytes(inode));
