@@ -770,6 +770,9 @@ struct lnet_peer_net {
 	/* Net ID */
 	__u32			lpn_net_id;
 
+	/* selection sequence number */
+	__u32			lpn_seq;
+
 	/* reference count */
 	atomic_t		lpn_refcount;
 };
