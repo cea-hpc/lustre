@@ -1787,13 +1787,17 @@ lnet_select_peer_ni(struct lnet_send_data *sd, struct lnet_peer *peer,
 		 * if the best_ni we've chosen aleady has this lpni
 		 * preferred, then let's use it
 		 */
-		ni_is_pref = lnet_peer_is_pref_nid_locked(lpni,
-							  best_ni->ni_nid);
+		if (best_ni) {
+			ni_is_pref = lnet_peer_is_pref_nid_locked(lpni,
+							best_ni->ni_nid);
+
+			CDEBUG(D_NET, "%s ni_is_pref = %d\n",
+			       libcfs_nid2str(best_ni->ni_nid), ni_is_pref);
+		} else {
+			ni_is_pref = false;
+		}
 
 		lpni_healthv = atomic_read(&lpni->lpni_healthv);
-
-		CDEBUG(D_NET, "%s ni_is_pref = %d\n",
-		       libcfs_nid2str(best_ni->ni_nid), ni_is_pref);
 
 		if (best_lpni)
 			CDEBUG(D_NET, "%s c:[%d, %d], s:[%d, %d]\n",
@@ -1996,9 +2000,45 @@ lnet_handle_find_routed_path(struct lnet_send_data *sd,
 			     struct lnet_peer **gw_peer)
 {
 	struct lnet_peer_ni *gw;
+	struct lnet_peer *lp;
+	struct lnet_peer_net *lpn;
+	struct lnet_peer_net *best_lpn = NULL;
+	struct lnet_remotenet *rnet;
+	struct lnet_peer_ni *lpni = NULL;
 	lnet_nid_t src_nid = sd->sd_src_nid;
 
-	gw = lnet_find_route_locked(NULL, LNET_NIDNET(dst_nid),
+	/* we've already looked up the initial lpni using dst_nid */
+	lpni = sd->sd_best_lpni;
+	/* the peer tree must be in existence */
+	LASSERT(lpni && lpni->lpni_peer_net && lpni->lpni_peer_net->lpn_peer);
+	lp = lpni->lpni_peer_net->lpn_peer;
+
+	list_for_each_entry(lpn, &lp->lp_peer_nets, lpn_peer_nets) {
+		/* is this remote network reachable?  */
+		rnet = lnet_find_rnet_locked(lpn->lpn_net_id);
+		if (!rnet)
+			continue;
+
+		if (!best_lpn)
+			best_lpn = lpn;
+
+		best_lpn = lpn;
+	}
+
+	if (!best_lpn) {
+		CERROR("peer %s has no available nets\n",
+		       libcfs_nid2str(sd->sd_dst_nid));
+		return -EHOSTUNREACH;
+	}
+
+	sd->sd_best_lpni = lnet_find_best_lpni_on_net(sd, lp,
+						      best_lpn->lpn_net_id);
+	if (!sd->sd_best_lpni) {
+		CERROR("peer %s down\n", libcfs_nid2str(sd->sd_dst_nid));
+		return -EHOSTUNREACH;
+	}
+
+	gw = lnet_find_route_locked(NULL, best_lpn->lpn_net_id,
 				    sd->sd_rtr_nid);
 	if (!gw) {
 		CERROR("no route to %s from %s\n",
@@ -2046,6 +2086,7 @@ lnet_handle_find_routed_path(struct lnet_send_data *sd,
 	}
 
 	*gw_lpni = gw;
+	best_lpn->lpn_seq++;
 
 	return 0;
 }
@@ -2404,11 +2445,12 @@ lnet_handle_any_mr_dst(struct lnet_send_data *sd)
 		return rc;
 
 	/*
-	 * TODO; One possible enhancement is to run the selection
-	 * algorithm on the peer. However for remote peers the credits are
-	 * not decremented, so we'll be basically going over the peer NIs
-	 * in round robin. An MR router will run the selection algorithm
-	 * on the next-hop interfaces.
+	 * Now that we must route to the destination, we must consider the
+	 * Now that we must route to the destination, we must consider the
+	 * MR case, where the destination has multiple interfaces, some of
+	 * which we can route to and others we do not. For this reason we
+	 * need to select the destination which we can route to and if
+	 * there are multiple, we need to round robin.
 	 */
 	rc = lnet_handle_find_routed_path(sd, sd->sd_dst_nid, &gw_lpni,
 					  &gw_peer);
@@ -2689,8 +2731,13 @@ lnet_send(lnet_nid_t src_nid, struct lnet_msg *msg, lnet_nid_t rtr_nid)
 	LASSERT(!msg->msg_tx_committed);
 
 	rc = lnet_select_pathway(src_nid, dst_nid, msg, rtr_nid);
-	if (rc < 0)
+	if (rc < 0) {
+		if (rc == -EHOSTUNREACH)
+			msg->msg_health_status = LNET_MSG_STATUS_REMOTE_ERROR;
+		else
+			msg->msg_health_status = LNET_MSG_STATUS_LOCAL_ERROR;
 		return rc;
+	}
 
 	if (rc == LNET_CREDIT_OK)
 		lnet_ni_send(msg->msg_txni, msg);
