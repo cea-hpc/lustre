@@ -201,6 +201,8 @@ init_sublock:
 			lls->sub_initialized = 1;
 			nr++;
 		}
+		if (result < 0)
+			break;
 	}
 	LASSERT(ergo(result == 0, nr == lovlck->lls_nr));
 
