@@ -215,6 +215,20 @@ lnet_eq_free(struct lnet_eq *eq)
 	LIBCFS_FREE(eq, sizeof(*eq));
 }
 
+static inline unsigned int
+lnet_ni_get_status_locked(struct lnet_ni *ni)
+__must_hold(&ni->ni_lock)
+{
+	if (ni->ni_nid == LNET_NID_LO_0)
+		return LNET_NI_STATUS_UP;
+	else if (atomic_read(&ni->ni_fatal_error_on))
+		return LNET_NI_STATUS_DOWN;
+	else if (ni->ni_status)
+		return ni->ni_status->ns_status;
+	else
+		return LNET_NI_STATUS_UP;
+}
+
 static inline struct lnet_libmd *
 lnet_md_alloc(struct lnet_md *umd)
 {
