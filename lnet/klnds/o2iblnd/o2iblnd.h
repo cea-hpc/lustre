@@ -106,6 +106,7 @@ struct kib_tunables {
 	int		 *kib_nscheds;
 	int		 *kib_wrq_sge;		/* # sg elements per wrq */
 	int		 *kib_use_fastreg_gaps; /* enable discontiguous fastreg fragment support */
+	int		 *kib_relaxed_ordering; /* enable IB relaxed ordering optimization */
 };
 
 extern struct kib_tunables  kiblnd_tunables;
@@ -780,6 +781,17 @@ static inline u32 ib_inc_rkey(u32 rkey)
 	return ((rkey + 1) & mask) | (rkey & ~mask);
 }
 #endif
+
+static inline int check_relaxed_order(struct kib_tunables *tun)
+{
+	int flag = 0;
+
+#if IS_IB_ACCESS_RELAXED_ORDERING  == 1
+	if (*tun->kib_relaxed_ordering != 0)
+		flag = IB_ACCESS_RELAXED_ORDERING;
+#endif
+	return flag;
+}
 
 extern struct kib_data kiblnd_data;
 

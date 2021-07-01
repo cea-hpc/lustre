@@ -186,6 +186,10 @@ static unsigned int wrq_sge = 2;
 module_param(wrq_sge, uint, 0444);
 MODULE_PARM_DESC(wrq_sge, "# scatter/gather element per work request");
 
+static int ib_relaxed_ordering = IS_IB_ACCESS_RELAXED_ORDERING;
+module_param(ib_relaxed_ordering, int, 0644);
+MODULE_PARM_DESC(ib_relaxed_ordering, "set non-zero to enable IB relaxed ordering memory regions");
+
 struct kib_tunables kiblnd_tunables = {
         .kib_dev_failover           = &dev_failover,
         .kib_service                = &service,
@@ -201,6 +205,7 @@ struct kib_tunables kiblnd_tunables = {
 	.kib_nscheds		    = &nscheds,
 	.kib_wrq_sge		    = &wrq_sge,
 	.kib_use_fastreg_gaps       = &use_fastreg_gaps,
+	.kib_relaxed_ordering	    = &ib_relaxed_ordering,
 };
 
 static struct lnet_ioctl_config_o2iblnd_tunables default_tunables;
@@ -329,5 +334,13 @@ kiblnd_tunables_init(void)
 	default_tunables.lnd_fmr_cache = fmr_cache;
 	default_tunables.lnd_ntx = ntx;
 	default_tunables.lnd_conns_per_peer = conns_per_peer;
+
+	if (check_relaxed_order(&kiblnd_tunables) != 0) {
+		LCONSOLE_INFO("Using IB relaxed ordering optimization\n");
+	} else if (*kiblnd_tunables.kib_relaxed_ordering != 0) {
+		CERROR("IB relaxed ordering optimization is not supported\n");
+		*kiblnd_tunables.kib_relaxed_ordering = 0;
+	}
+
 	return 0;
 }

@@ -1536,7 +1536,8 @@ static int kiblnd_alloc_fmr_pool(struct kib_fmr_poolset *fps,
 		.max_pages_per_fmr = LNET_MAX_IOV,
 		.page_shift        = PAGE_SHIFT,
 		.access            = (IB_ACCESS_LOCAL_WRITE |
-				      IB_ACCESS_REMOTE_WRITE),
+				      IB_ACCESS_REMOTE_WRITE |
+				      check_relaxed_order(&kiblnd_tunables)),
 		.pool_size	   = fps->fps_pool_size,
 		.dirty_watermark   = fps->fps_flush_trigger,
 		.flush_function    = NULL,
@@ -1907,6 +1908,10 @@ again:
 				struct ib_fast_reg_page_list *frpl;
 #endif
 				struct ib_mr *mr;
+				int ib_access =
+					IB_ACCESS_LOCAL_WRITE |
+					IB_ACCESS_REMOTE_WRITE |
+					check_relaxed_order(&kiblnd_tunables);
 
 				frd = list_first_entry(&fpo->fast_reg.fpo_pool_list,
 							struct kib_fast_reg_descriptor,
@@ -1958,8 +1963,7 @@ again:
 				wr->wr.send_flags = 0;
 				wr->mr = mr;
 				wr->key = is_rx ? mr->rkey : mr->lkey;
-				wr->access = (IB_ACCESS_LOCAL_WRITE |
-					      IB_ACCESS_REMOTE_WRITE);
+				wr->access = ib_access;
 #else /* HAVE_IB_MAP_MR_SG */
 				if (!tx_pages_mapped) {
 					npages = kiblnd_map_tx_pages(tx, rd);
@@ -1983,10 +1987,8 @@ again:
 				wr->wr.wr.fast_reg.page_shift = PAGE_SHIFT;
 				wr->wr.wr.fast_reg.length = nob;
 				wr->wr.wr.fast_reg.rkey =
-						is_rx ? mr->rkey : mr->lkey;
-				wr->wr.wr.fast_reg.access_flags =
-						(IB_ACCESS_LOCAL_WRITE |
-						 IB_ACCESS_REMOTE_WRITE);
+					is_rx ? mr->rkey : mr->lkey;
+				wr->wr.wr.fast_reg.access_flags = ib_access;
 #endif /* HAVE_IB_MAP_MR_SG */
 
 				fmr->fmr_key  = is_rx ? mr->rkey : mr->lkey;
@@ -2667,8 +2669,9 @@ static int
 kiblnd_hdev_setup_mrs(struct kib_hca_dev *hdev)
 {
 	struct ib_mr *mr;
-	int           acflags = IB_ACCESS_LOCAL_WRITE |
-				IB_ACCESS_REMOTE_WRITE;
+	int acflags = (IB_ACCESS_LOCAL_WRITE |
+		       IB_ACCESS_REMOTE_WRITE |
+		       check_relaxed_order(&kiblnd_tunables));
 
 	mr = ib_get_dma_mr(hdev->ibh_pd, acflags);
 	if (IS_ERR(mr)) {

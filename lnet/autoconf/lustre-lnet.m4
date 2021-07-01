@@ -618,6 +618,23 @@ AS_IF([test $ENABLEO2IB != "no"], [
 			[rdma_connect_locked is defined])
 	])
 
+	# IB_ACCESS_RELAXED_ORDERING was added in Linux 5.6
+	# commit 2233c6609c11146ed1a26eec2e4335131077a608
+	# and in MOFED-5.0-1. Check if the relaxed ordering
+	# optimization is supported by IB API.
+	LB_CHECK_COMPILE([if 'IB_ACCESS_RELAXED_ORDERING' is defined],
+	IB_ACCESS_RELAXED_ORDERING, [
+		#include <rdma/ib_verbs.h>
+	],[
+		 enum ib_access_flags access = IB_ACCESS_RELAXED_ORDERING;
+	],[
+		AC_DEFINE(IS_IB_ACCESS_RELAXED_ORDERING, 1,
+			[relaxed ordering for IB memory regions is supported])
+	],[
+		AC_DEFINE(IS_IB_ACCESS_RELAXED_ORDERING, 0,
+			[relaxed ordering for IB memory regions is not supported])
+	])
+
 	EXTRA_CHECK_INCLUDE=""
 ]) # ENABLEO2IB != "no"
 ]) # LN_CONFIG_O2IB
