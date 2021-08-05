@@ -3174,63 +3174,57 @@ test_33c() {
 	local write_bytes
 	local all_zeros
 
-	all_zeros=:
-	rm -fr $DIR/$tdir
+	all_zeros=true
 	test_mkdir $DIR/$tdir
 	# Read: 0, Write: 4, create/destroy: 2/0, stat: 1, punch: 0
 
-        sync
-        for ostnum in $(seq $OSTCOUNT); do
-                # test-framework's OST numbering is one-based, while Lustre's
-                # is zero-based
-                ostname=$(printf "$FSNAME-OST%.4x" $((ostnum - 1)))
-                # Parsing llobdstat's output sucks; we could grep the /proc
-                # path, but that's likely to not be as portable as using the
-                # llobdstat utility.  So we parse lctl output instead.
-                write_bytes=$(do_facet ost$ostnum lctl get_param -n \
-                        obdfilter/$ostname/stats |
-                        awk '/^write_bytes/ {print $7}' )
-                echo "baseline_write_bytes@$OSTnum/$ostname=$write_bytes"
-                if (( ${write_bytes:-0} > 0 ))
-                then
-                        all_zeros=false
-                        break;
-                fi
-        done
+	sync
+	for ostnum in $(seq $OSTCOUNT); do
+		# test-framework's OST numbering is one-based, while Lustre's
+		# is zero-based
+		ostname=$(printf "$FSNAME-OST%.4x" $((ostnum - 1)))
+		# check if at least some write_bytes stats are counted
+		write_bytes=$(do_facet ost$ostnum lctl get_param -n \
+			      obdfilter.$ostname.stats |
+			      awk '/^write_bytes/ {print $7}' )
+		echo "baseline_write_bytes@ost$ostnum/$ostname=$write_bytes"
+		if (( ${write_bytes:-0} > 0 )); then
+			all_zeros=false
+			break;
+		fi
+	done
 
-        $all_zeros || return 0
+	$all_zeros || return 0
 
 	# Write four bytes
 	echo foo > $DIR/$tdir/bar
 	# Really write them
 	sync
 
-        # Total up write_bytes after writing.  We'd better find non-zeros.
-        for ostnum in $(seq $OSTCOUNT); do
-                ostname=$(printf "$FSNAME-OST%.4x" $((ostnum - 1)))
-                write_bytes=$(do_facet ost$ostnum lctl get_param -n \
-                        obdfilter/$ostname/stats |
-                        awk '/^write_bytes/ {print $7}' )
-                echo "write_bytes@$OSTnum/$ostname=$write_bytes"
-                if (( ${write_bytes:-0} > 0 ))
-                then
-                        all_zeros=false
-                        break;
-                fi
-        done
+	# Total up write_bytes after writing.  We'd better find non-zeros.
+	for ostnum in $(seq $OSTCOUNT); do
+		ostname=$(printf "$FSNAME-OST%.4x" $((ostnum - 1)))
+		write_bytes=$(do_facet ost$ostnum lctl get_param -n \
+			      obdfilter/$ostname/stats |
+			      awk '/^write_bytes/ {print $7}' )
+		echo "write_bytes@ost$ostnum/$ostname=$write_bytes"
+		if (( ${write_bytes:-0} > 0 )); then
+			all_zeros=false
+			break;
+		fi
+	done
 
-        if $all_zeros
-        then
-                for ostnum in $(seq $OSTCOUNT); do
-                        ostname=$(printf "$FSNAME-OST%.4x" $((ostnum - 1)))
-                        echo "Check that write_bytes is present in obdfilter/*/stats:"
-                        do_facet ost$ostnum lctl get_param -n \
-                                obdfilter/$ostname/stats
-                done
-                error "OST not keeping write_bytes stats (b22312)"
-        fi
+	if $all_zeros; then
+		for ostnum in $(seq $OSTCOUNT); do
+			ostname=$(printf "$FSNAME-OST%.4x" $((ostnum - 1)))
+			echo "Check write_bytes is in obdfilter.*.stats:"
+			do_facet ost$ostnum lctl get_param -n \
+				obdfilter.$ostname.stats
+		done
+		error "OST not keeping write_bytes stats (b=22312)"
+	fi
 }
-run_test 33c "test llobdstat and write_bytes"
+run_test 33c "test write_bytes stats"
 
 test_33d() {
 	[[ $MDSCOUNT -lt 2 ]] && skip_env "needs >= 2 MDTs"
@@ -8442,18 +8436,9 @@ run_test 100 "check local port using privileged port ==========="
 
 function get_named_value()
 {
-    local tag
+	local tag=$1
 
-    tag=$1
-    while read ;do
-        line=$REPLY
-        case $line in
-        $tag*)
-            echo $line | sed "s/^$tag[ ]*//"
-            break
-            ;;
-        esac
-    done
+	grep -w "$tag" | sed "s/^$tag  *\([0-9]*\)  *.*/\1/"
 }
 
 export CACHE_MAX=$($LCTL get_param -n llite.*.max_cached_mb |
@@ -8473,10 +8458,10 @@ test_101a() {
 	local nreads=10000
 	local cache_limit=32
 
-	$LCTL set_param -n osc.*-osc*.rpc_stats 0
+	$LCTL set_param -n osc.*-osc*.rpc_stats=0
 	trap cleanup_101a EXIT
-	$LCTL set_param -n llite.*.read_ahead_stats 0
-	$LCTL set_param -n llite.*.max_cached_mb $cache_limit
+	$LCTL set_param -n llite.*.read_ahead_stats=0
+	$LCTL set_param -n llite.*.max_cached_mb=$cache_limit
 
 	#
 	# randomly read 10000 of 64K chunks from file 3x 32MB in size
@@ -8486,7 +8471,7 @@ test_101a() {
 
 	discard=0
 	for s in $($LCTL get_param -n llite.*.read_ahead_stats |
-		get_named_value 'read but discarded' | cut -d" " -f1); do
+		   get_named_value 'read.but.discarded' | cut -d" " -f1); do
 			discard=$(($discard + $s))
 	done
 	cleanup_101a
@@ -8544,8 +8529,7 @@ ra_check_101() {
 	local discard_limit=$((((STRIDE_LENGTH - 1)*3/(STRIDE_LENGTH*OSTCOUNT))* \
 			     (STRIDE_LENGTH*OSTCOUNT - STRIDE_LENGTH)))
 	DISCARD=$($LCTL get_param -n llite.*.read_ahead_stats |
-			get_named_value 'read but discarded' |
-			cut -d" " -f1 | calc_total)
+		  get_named_value 'read.but.discarded' | calc_total)
 	if [[ $DISCARD -gt $discard_limit ]]; then
 		$LCTL get_param llite.*.read_ahead_stats
 		error "Too many ($DISCARD) discarded pages with size (${READ_SIZE})"
@@ -8578,7 +8562,7 @@ test_101b() {
 		local READ_COUNT=$((STRIPE_SIZE/BSIZE))
 		local STRIDE_LENGTH=$((STRIDE_SIZE/BSIZE))
 		local OFFSET=$((STRIPE_SIZE/BSIZE*(OSTCOUNT - 1)))
-		$LCTL set_param -n llite.*.read_ahead_stats 0
+		$LCTL set_param -n llite.*.read_ahead_stats=0
 		$READS -f $DIR/$tfile  -l $STRIDE_LENGTH -o $OFFSET \
 			      -s $FILE_LENGTH -b $STRIPE_SIZE -a $READ_COUNT -n $ITERATION
 		cancel_lru_locks osc
@@ -8622,11 +8606,11 @@ test_101c() {
 	cleanup_test101bc
 	true
 }
-run_test 101c "check stripe_size aligned read-ahead ================="
+run_test 101c "check stripe_size aligned read-ahead"
 
 set_read_ahead() {
 	$LCTL get_param -n llite.*.max_read_ahead_mb | head -n 1
-	$LCTL set_param -n llite.*.max_read_ahead_mb $1 > /dev/null 2>&1
+	$LCTL set_param -n llite.*.max_read_ahead_mb=$1 > /dev/null 2>&1
 }
 
 test_101d() {
@@ -8695,14 +8679,14 @@ test_101e() {
 	cancel_lru_locks $OSC
 
 	echo "Reset readahead stats"
-	$LCTL set_param -n llite.*.read_ahead_stats 0
+	$LCTL set_param -n llite.*.read_ahead_stats=0
 
 	for ((i = 0; i < $count; i++)); do
 		dd if=$file.$i of=/dev/null bs=$bsize count=$size_KB 2>/dev/null
 	done
 
 	local miss=$($LCTL get_param -n llite.*.read_ahead_stats |
-		     get_named_value 'misses' | cut -d" " -f1 | calc_total)
+		     get_named_value 'misses' | calc_total)
 
 	for ((i = 0; i < $count; i++)); do
 		rm -rf $file.$i 2>/dev/null
@@ -8727,7 +8711,7 @@ test_101f() {
 	cancel_lru_locks osc
 
 	echo Reset readahead stats
-	$LCTL set_param -n llite.*.read_ahead_stats 0
+	$LCTL set_param -n llite.*.read_ahead_stats=0
 
 	echo mmap read the file with small block size
 	iozone -i 1 -u 1 -l 1 -+n -r 32k -s 128m -B -f $DIR/$tfile \
@@ -8736,7 +8720,7 @@ test_101f() {
 	echo checking missing pages
 	$LCTL get_param llite.*.read_ahead_stats
 	local miss=$($LCTL get_param -n llite.*.read_ahead_stats |
-			get_named_value 'misses' | cut -d" " -f1 | calc_total)
+		     get_named_value 'misses' | calc_total)
 
 	$LCTL set_param debug="$old_debug"
 	[ $miss -lt 3 ] || error "misses too much pages ('$miss')!"
