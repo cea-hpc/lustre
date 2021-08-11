@@ -1777,6 +1777,7 @@ void target_cleanup_recovery(struct obd_device *obd)
 		return;
 	}
 	obd->obd_recovering = obd->obd_abort_recovery = 0;
+	obd->obd_abort_recov_mdt = 0;
 	spin_unlock(&obd->obd_dev_lock);
 
 	spin_lock(&obd->obd_recovery_task_lock);
@@ -2694,6 +2695,7 @@ static int target_recovery_thread(void *arg)
          * to regular mds_handle() since now */
 	spin_lock(&obd->obd_dev_lock);
 	obd->obd_recovering = obd->obd_abort_recovery = 0;
+	obd->obd_abort_recov_mdt = 0;
 	spin_unlock(&obd->obd_dev_lock);
 	spin_lock(&obd->obd_recovery_task_lock);
 	target_cancel_recovery_timer(obd);
