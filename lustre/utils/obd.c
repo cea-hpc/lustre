@@ -2757,7 +2757,7 @@ out:
  */
 int jt_llog_print_iter(char *logname, long start, long end,
 		       int (record_cb)(const char *record, void *private),
-		       void *private, bool reverse)
+		       void *private, bool reverse, bool raw)
 {
 	struct obd_ioctl_data data = { 0 };
 	char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
@@ -2790,6 +2790,7 @@ retry:
 		snprintf(endbuf, sizeof(endbuf), "%lu",
 			 end < rec + inc - 1 ? end : rec + inc - 1);
 
+		data.ioc_u32_1 = raw ? 1 : 0;
 		/* start and end record numbers are passed as ASCII digits */
 		data.ioc_inlbuf2 = startbuf;
 		data.ioc_inllen2 = strlen(startbuf) + 1;
@@ -2833,14 +2834,15 @@ out:
 	return rc;
 }
 
-static int llog_parse_catalog_start_end(int *argc, char **argv[],
-					char **catalog, long *start, long *end)
+static int llog_parse_catalog_options(int *argc, char ***argv, char **catalog,
+				      long *start, long *end, int *raw)
 {
 	const struct option long_opts[] = {
 	/* the --catalog option is not required, just for consistency */
 	{ .val = 'c',	.name = "catalog",	.has_arg = required_argument },
 	{ .val = 'e',	.name = "end",		.has_arg = required_argument },
 	{ .val = 'h',	.name = "help",		.has_arg = no_argument },
+	{ .val = 'r',	.name = "raw",		.has_arg = no_argument },
 	{ .val = 's',	.name = "start",	.has_arg = required_argument },
 	{ .name = NULL } };
 	char *cmd = (*argv)[0];
@@ -2851,7 +2853,7 @@ static int llog_parse_catalog_start_end(int *argc, char **argv[],
 		return -EINVAL;
 
 	/* now process command line arguments*/
-	while ((c = getopt_long(*argc, *argv, "c:e:hs:",
+	while ((c = getopt_long(*argc, *argv, "c:e:hrs:",
 				long_opts, NULL)) != -1) {
 		switch (c) {
 		case 'c':
@@ -2864,6 +2866,11 @@ static int llog_parse_catalog_start_end(int *argc, char **argv[],
 					cmd, optarg);
 				return CMD_HELP;
 			}
+			break;
+		case 'r':
+			if (!raw)
+				return CMD_HELP;
+			*raw = 1;
 			break;
 		case 's':
 			*start = strtol(optarg, &endp, 0);
@@ -2948,14 +2955,16 @@ int jt_llog_print(int argc, char **argv)
 {
 	char *catalog = NULL;
 	long start = 1, end = -1;
+	int raw = 0;
 	int rc;
 
-	rc = llog_parse_catalog_start_end(&argc, &argv, &catalog, &start, &end);
+	rc = llog_parse_catalog_options(&argc, &argv, &catalog, &start, &end,
+					&raw);
 	if (rc)
 		return rc;
 
 	rc = jt_llog_print_iter(catalog, start, end, jt_llog_print_cb,
-				NULL, false);
+				NULL, false, !!raw);
 
 	return rc;
 }
@@ -2967,7 +2976,7 @@ int jt_llog_print(int argc, char **argv)
  * The positional arguments option should eventually be phased out.
  */
 static int llog_parse_catalog_log_idx(int *argc, char ***argv, const char *opts,
-				      int max_args, struct obd_ioctl_data *data)
+				      struct obd_ioctl_data *data)
 {
 	const struct option long_opts[] = {
 	/* the --catalog option is not required, just for consistency */
@@ -3030,7 +3039,7 @@ int jt_llog_cancel(int argc, char **argv)
 	int rc;
 
 	/* Parse catalog file (in inlbuf1) and named parameters */
-	rc = llog_parse_catalog_log_idx(&argc, &argv, "c:hi:l:", 3, &data);
+	rc = llog_parse_catalog_log_idx(&argc, &argv, "c:hi:l:", &data);
 
 	/* Handle old positional parameters if not using named parameters,
 	 * either "<catalog> <log_idx>" or "<catalog> <log_id> <log_idx>".
@@ -3077,7 +3086,8 @@ int jt_llog_check(int argc, char **argv)
 	char *cmd = argv[0];
 	int rc;
 
-	rc = llog_parse_catalog_start_end(&argc, &argv, &catalog, &start, &end);
+	rc = llog_parse_catalog_options(&argc, &argv, &catalog, &start,
+					&end, NULL);
 	if (rc)
 		return rc;
 
@@ -3123,7 +3133,7 @@ int jt_llog_remove(int argc, char **argv)
 	char *cmd = argv[0];
 	int rc;
 
-	rc = llog_parse_catalog_log_idx(&argc, &argv, "c:hl:", 2, &data);
+	rc = llog_parse_catalog_log_idx(&argc, &argv, "c:hl:", &data);
 	if (rc)
 		return rc;
 
@@ -3328,7 +3338,7 @@ static int llog_search_ost(char *logname, long last_index, char *ostname)
 	for (end = last_index; end > 1; end -= inc) {
 		start = end - inc > 0 ? end - inc : 1;
 		rc = jt_llog_print_iter(logname, start, end, llog_search_ost_cb,
-					ostname, true);
+					ostname, true, false);
 		if (rc)
 			break;
 	}
@@ -3468,7 +3478,7 @@ static int llog_search_pool(char *logname, long last_index, char *fsname,
 	for (end = last_index; end > 1; end -= inc) {
 		start = end - inc > 0 ? end - inc : 1;
 		rc = jt_llog_print_iter(logname, start, end,
-					llog_search_pool_cb, &lpd, true);
+					llog_search_pool_cb, &lpd, true, false);
 		if (rc) {
 			if (rc == 1 && lpd.lpd_pool_exists)
 				rc = lpd.lpd_ost_num ? 1 : 0;
@@ -4764,7 +4774,8 @@ int llog_poollist(char *fsname, char *poolname)
 		strncpy(lpld.lpld_poolname, poolname,
 			sizeof(lpld.lpld_poolname) - 1);
 	snprintf(logname, sizeof(logname), "%s-client", fsname);
-	rc = jt_llog_print_iter(logname, 0, -1, llog_poollist_cb, &lpld, false);
+	rc = jt_llog_print_iter(logname, 0, -1, llog_poollist_cb, &lpld, false,
+				false);
 
 	if (poolname && poolname[0])
 		printf("Pool: %s.%s\n", fsname, poolname);
