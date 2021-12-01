@@ -58,7 +58,7 @@
 
 struct lod_qos_rr {
 	spinlock_t		 lqr_alloc;	/* protect allocation index */
-	__u32			 lqr_start_idx;	/* start index of new inode */
+	atomic_t		 lqr_start_idx;	/* start index of new inode */
 	__u32			 lqr_offset_idx;/* aliasing for start_idx */
 	int			 lqr_start_count;/* reseed counter */
 	struct ost_pool		 lqr_pool;	/* round-robin optimized list */

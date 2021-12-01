@@ -1057,7 +1057,6 @@ static int lod_alloc_rr(const struct lu_env *env, struct lod_object *lo,
 	struct ost_pool   *osts;
 	struct lod_qos_rr *lqr;
 	unsigned int	i, array_idx;
-	__u32 ost_start_idx_temp;
 	__u32 stripe_idx = 0;
 	__u32 stripe_count, stripe_count_min, ost_idx;
 	int rc, speed = 0, ost_connecting = 0;
@@ -1091,37 +1090,40 @@ static int lod_alloc_rr(const struct lu_env *env, struct lod_object *lo,
 	down_read(&m->lod_qos.lq_rw_sem);
 	spin_lock(&lqr->lqr_alloc);
 	if (--lqr->lqr_start_count <= 0) {
-		lqr->lqr_start_idx = cfs_rand() % osts->op_count;
+		atomic_set(&lqr->lqr_start_idx,
+			   cfs_rand() % osts->op_count);
 		lqr->lqr_start_count =
 			(LOV_CREATE_RESEED_MIN / max(osts->op_count, 1U) +
 			 LOV_CREATE_RESEED_MULT) * max(osts->op_count, 1U);
-	} else if (stripe_count_min >= osts->op_count ||
-			lqr->lqr_start_idx > osts->op_count) {
-		/* If we have allocated from all of the OSTs, slowly
-		 * precess the next start if the OST/stripe count isn't
-		 * already doing this for us. */
-		lqr->lqr_start_idx %= osts->op_count;
+	} else if (atomic_read(&lqr->lqr_start_idx) >= osts->op_count) {
+		/* If we have allocated from all of the tgts, slowly
+		 * precess the next start OST if the tgt/stripe count
+		 * difference isn't already doing this for us.
+		 */
+		atomic_sub(osts->op_count, &lqr->lqr_start_idx);
 		if (stripe_count > 1 && (osts->op_count % stripe_count) != 1)
 			++lqr->lqr_offset_idx;
 	}
-	ost_start_idx_temp = lqr->lqr_start_idx;
+	spin_unlock(&lqr->lqr_alloc);
 
 repeat_find:
-
 	QOS_DEBUG("pool '%s' want %d start_idx %d start_count %d offset %d "
 		  "active %d count %d\n",
 		  lod_comp->llc_pool ? lod_comp->llc_pool : "",
-		  stripe_count, lqr->lqr_start_idx, lqr->lqr_start_count,
-		  lqr->lqr_offset_idx, osts->op_count, osts->op_count);
+		  stripe_count, atomic_read(&lqr->lqr_start_idx),
+		  lqr->lqr_start_count, lqr->lqr_offset_idx, osts->op_count,
+		  osts->op_count);
 
 	for (i = 0; i < osts->op_count && stripe_idx < stripe_count; i++) {
-		array_idx = (lqr->lqr_start_idx + lqr->lqr_offset_idx) %
+		int idx;
+
+		idx = atomic_inc_return(&lqr->lqr_start_idx);
+		array_idx = (idx + lqr->lqr_offset_idx) %
 				osts->op_count;
-		++lqr->lqr_start_idx;
 		ost_idx = lqr->lqr_pool.op_array[array_idx];
 
 		QOS_DEBUG("#%d strt %d act %d strp %d ary %d idx %d\n",
-			  i, lqr->lqr_start_idx, /* XXX: active*/ 0,
+			  i, idx, /* XXX: active*/ 0,
 			  stripe_idx, array_idx, ost_idx);
 
 		if ((ost_idx == LOV_QOS_EMPTY) ||
@@ -1133,11 +1135,9 @@ repeat_find:
 		if (OBD_FAIL_CHECK(OBD_FAIL_MDS_OSC_PRECREATE) && ost_idx == 0)
 			continue;
 
-		spin_unlock(&lqr->lqr_alloc);
 		rc = lod_check_and_reserve_ost(env, lo, sfs, ost_idx, speed,
 					       &stripe_idx, stripe, ost_indices,
 					       th);
-		spin_lock(&lqr->lqr_alloc);
 
 		if (rc != 0 && OST_TGT(m, ost_idx)->ltd_connecting)
 			ost_connecting = 1;
@@ -1145,13 +1145,11 @@ repeat_find:
 	if ((speed < 2) && (stripe_idx < stripe_count_min)) {
 		/* Try again, allowing slower OSCs */
 		speed++;
-		lqr->lqr_start_idx = ost_start_idx_temp;
 
 		ost_connecting = 0;
 		goto repeat_find;
 	}
 
-	spin_unlock(&lqr->lqr_alloc);
 	up_read(&m->lod_qos.lq_rw_sem);
 
 	if (stripe_idx) {
