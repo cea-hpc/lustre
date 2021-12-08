@@ -968,7 +968,7 @@ int ll_show_options(struct seq_file *seq, struct dentry *dentry);
 #else
 int ll_show_options(struct seq_file *seq, struct vfsmount *vfs);
 #endif
-void ll_dirty_page_discard_warn(struct page *page, int ioret);
+void ll_dirty_page_discard_warn(struct inode *inode, int ioret);
 int ll_prep_inode(struct inode **inode, struct ptlrpc_request *req,
 		  struct super_block *, struct lookup_intent *);
 int ll_obd_statfs(struct inode *inode, void __user *arg);
