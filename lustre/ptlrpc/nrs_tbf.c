@@ -349,7 +349,7 @@ nrs_tbf_rule_start(struct ptlrpc_nrs_policy *policy,
 		head->th_rule = rule;
 	}
 
-	CDEBUG(D_RPCTRACE, "TBF starts rule@%p rate %u gen %llu\n",
+	CDEBUG(D_RPCTRACE, "TBF starts rule@%p rate %llu gen %llu\n",
 	       rule, rule->tr_rpc_rate, rule->tr_generation);
 
 	return 0;
@@ -1002,7 +1002,7 @@ static int nrs_tbf_jobid_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_jobid_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %u, ref %d\n", rule->tr_name,
+	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
 		   rule->tr_jobids_str, rule->tr_rpc_rate,
 		   atomic_read(&rule->tr_ref) - 1);
 	return 0;
@@ -1207,7 +1207,7 @@ static int nrs_tbf_nid_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_nid_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %u, ref %d\n", rule->tr_name,
+	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
 		   rule->tr_nids_str, rule->tr_rpc_rate,
 		   atomic_read(&rule->tr_ref) - 1);
 	return 0;
@@ -2062,7 +2062,7 @@ nrs_tbf_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_generic_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s %s %u, ref %d\n", rule->tr_name,
+	seq_printf(m, "%s %s %llu, ref %d\n", rule->tr_name,
 		   rule->tr_conds_str, rule->tr_rpc_rate,
 		   atomic_read(&rule->tr_ref) - 1);
 	return 0;
@@ -2356,7 +2356,7 @@ static int nrs_tbf_opcode_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_opcode_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %u, ref %d\n", rule->tr_name,
+	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
 		   rule->tr_opcodes_str, rule->tr_rpc_rate,
 		   atomic_read(&rule->tr_ref) - 1);
 	return 0;
@@ -2671,7 +2671,7 @@ nrs_tbf_id_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_id_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %u, ref %d\n", rule->tr_name,
+	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
 		   rule->tr_ids_str, rule->tr_rpc_rate,
 		   atomic_read(&rule->tr_ref) - 1);
 	return 0;
@@ -2962,7 +2962,7 @@ static int nrs_tbf_res_get(struct ptlrpc_nrs_policy *policy,
 			struct nrs_tbf_rule *rule;
 
 			CDEBUG(D_RPCTRACE,
-			       "TBF class@%p rate %u sequence %d, "
+			       "TBF class@%p rate %llu sequence %d, "
 			       "rule flags %d, head sequence %d\n",
 			       cli, cli->tc_rpc_rate,
 			       cli->tc_rule_sequence,
@@ -3118,8 +3118,7 @@ struct ptlrpc_nrs_request *nrs_tbf_req_get(struct ptlrpc_nrs_policy *policy,
 						     &cli->tc_node);
 			}
 			CDEBUG(D_RPCTRACE,
-			       "TBF dequeues: class@%p rate %u gen %llu "
-			       "token %llu, rule@%p rate %u gen %llu\n",
+			       "TBF dequeues: class@%p rate %llu gen %llu token %llu, rule@%p rate %llu gen %llu\n",
 			       cli, cli->tc_rpc_rate,
 			       cli->tc_rule_generation, cli->tc_ntoken,
 			       cli->tc_rule, cli->tc_rule->tr_rpc_rate,
@@ -3201,8 +3200,7 @@ static int nrs_tbf_req_add(struct ptlrpc_nrs_policy *policy,
 
 	if (rc == 0)
 		CDEBUG(D_RPCTRACE,
-		       "TBF enqueues: class@%p rate %u gen %llu "
-		       "token %llu, rule@%p rate %u gen %llu\n",
+		       "TBF enqueues: class@%p rate %llu gen %llu token %llu, rule@%p rate %llu gen %llu\n",
 		       cli, cli->tc_rpc_rate,
 		       cli->tc_rule_generation, cli->tc_ntoken,
 		       cli->tc_rule, cli->tc_rule->tr_rpc_rate,
@@ -3272,7 +3270,7 @@ static void nrs_tbf_req_stop(struct ptlrpc_nrs_policy *policy,
 /**
  * The maximum RPC rate.
  */
-#define LPROCFS_NRS_RATE_MAX		65535
+#define LPROCFS_NRS_RATE_MAX		1000000ULL	/* 1rpc/us */
 
 static int
 ptlrpc_lprocfs_nrs_tbf_rule_seq_show(struct seq_file *m, void *data)
