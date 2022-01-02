@@ -61,6 +61,7 @@ MANFILES =					\
 	lhbadm.8				\
 	llapi_create_volatile_param.3		\
 	llapi_fd2parent.3			\
+	llapi_fid_to_handle.3			\
 	llapi_file_create.3			\
 	llapi_file_get_stripe.3			\
 	llapi_file_open.3			\
@@ -109,6 +110,8 @@ MANFILES =					\
 	llapi_layout_stripe_count_set.3		\
 	llapi_layout_stripe_size_get.3		\
 	llapi_layout_stripe_size_set.3		\
+	llapi_open_by_fid.3			\
+	llapi_open_by_fid_at.3			\
 	llapi_param_get_paths.3			\
 	llapi_param_get_value.3			\
 	llapi_path2fid.3			\

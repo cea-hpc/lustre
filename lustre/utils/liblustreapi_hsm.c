@@ -1574,7 +1574,7 @@ int llapi_hsm_request(const char *path, const struct hsm_user_request *request)
 	/* If error, save errno value */
 	rc = rc ? -errno : 0;
 
-	close(fd);
+	/* fd is cached internally, no need to close it */
 	return rc;
 }
 
