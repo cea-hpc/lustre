@@ -36,7 +36,7 @@
  * Author: Robert Read <rread@clusterfs.com>
  */
 
-/* for O_DIRECTORY */
+/* for O_DIRECTORY and struct file_handle */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -49,6 +49,7 @@
 #include <stddef.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <sched.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <dirent.h>
@@ -82,7 +83,7 @@
 #include <linux/lustre/lustre_ioctl.h>
 #include "lustreapi_internal.h"
 
-#define MAX_LINE_LEN           256
+#define FORMATTED_BUF_LEN	1024
 
 static int llapi_msg_level = LLAPI_MSG_MAX;
 const char *liblustreapi_cmd;
@@ -1148,341 +1149,6 @@ out:
 	if (fd != -1)
 		close(fd);
 	return rc;
-}
-
-static int get_file_dev(const char *path, dev_t *dev)
-{
-#ifdef HAVE_STATX
-	struct statx stx;
-
-	if (!dev)
-		return -EINVAL;
-	if (statx(AT_FDCWD, path, 0, 0, &stx))
-		return -errno;
-	*dev = makedev(stx.stx_dev_major, stx.stx_dev_minor);
-#else
-	struct stat st;
-
-	if (!dev)
-		return -EINVAL;
-	if (stat(path, &st) != 0)
-		return -errno;
-
-	*dev = st.st_dev;
-#endif
-	return 0;
-}
-
-static int get_root_fd(const char *rootpath, int *outfd)
-{
-	int rc = 0;
-	int fd;
-
-	fd = open(rootpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
-	if (fd < 0) {
-		rc = -errno;
-		llapi_error(LLAPI_MSG_ERROR, rc,
-			    "cannot open '%s'", rootpath);
-	} else {
-		*outfd = fd;
-	}
-
-	return rc;
-}
-
-static struct {
-	dev_t dev;
-	char fsname[PATH_MAX];
-	char mnt_dir[PATH_MAX];
-	char nid[MAX_LINE_LEN];
-} root_cached = { 0 };
-
-static pthread_rwlock_t root_cached_lock = PTHREAD_RWLOCK_INITIALIZER;
-
-static int get_root_path_fast(int want, char *fsname, int *outfd, char *path,
-			      dev_t *dev, char *nid)
-{
-	int rc = -ENODEV;
-	int fsnamelen;
-	int mntlen;
-
-	pthread_rwlock_rdlock(&root_cached_lock);
-	if (root_cached.dev == 0)
-		goto out_unlock;
-
-	fsnamelen = strlen(root_cached.fsname);
-	mntlen = strlen(root_cached.mnt_dir);
-
-	/* Check the fsname for a match, if given */
-	if (!(want & WANT_FSNAME) && fsname &&
-	    strlen(fsname) == fsnamelen &&
-	    (strncmp(root_cached.fsname, fsname, fsnamelen) == 0)) {
-		rc = 0;
-		/* Check the dev for a match, if given */
-	} else if (!(want & WANT_DEV) && dev && *dev == root_cached.dev) {
-		rc = 0;
-		/* Otherwise find the longest matching path */
-	} else if (path && strlen(path) >= mntlen &&
-		   (strncmp(root_cached.mnt_dir, path, mntlen) == 0) &&
-		   (strlen(path) == mntlen || path[mntlen] == '/')) {
-		rc = 0;
-	}
-
-	if (rc)
-		goto out_unlock;
-
-	if ((want & WANT_FSNAME) && fsname)
-		strcpy(fsname, root_cached.fsname);
-	if ((want & WANT_PATH) && path)
-		strcpy(path, root_cached.mnt_dir);
-	if ((want & WANT_DEV) && dev)
-		*dev = root_cached.dev;
-	if ((want & WANT_FD) && outfd)
-		rc = get_root_fd(root_cached.mnt_dir, outfd);
-	if ((want & WANT_NID) && nid)
-		strcpy(nid, root_cached.nid);
-out_unlock:
-	pthread_rwlock_unlock(&root_cached_lock);
-	return rc;
-}
-
-static int get_root_path_slow(int want, char *fsname, int *outfd, char *path,
-			      int index, dev_t *dev, char *nid)
-{
-	struct mntent mnt;
-	char buf[PATH_MAX];
-	char *ptr, *ptr_end;
-	FILE *fp;
-	int idx = -1, mntlen = 0;
-	int rc = -ENODEV;
-	int fsnamelen = 0;
-	dev_t devmnt = 0;
-
-	/* get the mount point */
-	fp = setmntent(PROC_MOUNTS, "r");
-	if (fp == NULL) {
-		rc = -EIO;
-		llapi_error(LLAPI_MSG_ERROR, rc,
-			    "cannot retrieve filesystem mount point");
-		return rc;
-	}
-	while (getmntent_r(fp, &mnt, buf, sizeof(buf))) {
-
-		if (!llapi_is_lustre_mnt(&mnt))
-			continue;
-
-		idx++;
-		mntlen = strlen(mnt.mnt_dir);
-		ptr = strchr(mnt.mnt_fsname, '/');
-		while (ptr && *ptr == '/')
-			ptr++;
-		/*
-		 * thanks to the call to llapi_is_lustre_mnt() above,
-		 * we are sure that mnt.mnt_fsname contains ":/",
-		 * so ptr should never be NULL
-		 */
-		if (ptr == NULL)
-			continue;
-		ptr_end = ptr;
-		while (*ptr_end != '/' && *ptr_end != '\0')
-			ptr_end++;
-
-		fsnamelen = ptr_end - ptr;
-
-		/* ignore unaccessible filesystem */
-		if (get_file_dev(mnt.mnt_dir, &devmnt))
-			continue;
-
-		if ((want & WANT_INDEX) && idx == index) {
-			rc = 0;
-			break;
-		}
-
-		/* Check the fsname for a match, if given */
-		if (!(want & WANT_FSNAME) && fsname &&
-		    strlen(fsname) == fsnamelen &&
-		    (strncmp(ptr, fsname, fsnamelen) == 0)) {
-			rc = 0;
-			break;
-		}
-
-		/* Check the dev for a match, if given */
-		if (!(want & WANT_DEV) && dev && *dev == devmnt) {
-			rc = 0;
-			break;
-		}
-
-		/* Otherwise find the longest matching path */
-		if (path && strlen(path) >= mntlen &&
-		    (strncmp(mnt.mnt_dir, path, mntlen) == 0) &&
-		    (strlen(path) == mntlen || path[mntlen] == '/')) {
-			rc = 0;
-			break;
-		}
-	}
-
-	if (rc)
-		goto out;
-
-	/* Found it */
-	if (!(want & WANT_INDEX)) {
-		/* Cache the mount point information */
-		pthread_rwlock_wrlock(&root_cached_lock);
-
-		strncpy(root_cached.fsname, ptr, fsnamelen);
-		root_cached.fsname[fsnamelen] = '\0';
-		strncpy(root_cached.mnt_dir, mnt.mnt_dir, mntlen);
-		root_cached.mnt_dir[mntlen] = '\0';
-		root_cached.dev = devmnt;
-		ptr_end = strchr(mnt.mnt_fsname, ':');
-		strncpy(root_cached.nid, mnt.mnt_fsname,
-			ptr_end - mnt.mnt_fsname);
-		root_cached.nid[ptr_end - mnt.mnt_fsname] = '\0';
-
-		pthread_rwlock_unlock(&root_cached_lock);
-	}
-
-	if ((want & WANT_FSNAME) && fsname) {
-		strncpy(fsname, ptr, fsnamelen);
-		fsname[fsnamelen] = '\0';
-	}
-	if ((want & WANT_PATH) && path) {
-		strncpy(path, mnt.mnt_dir, mntlen);
-		path[mntlen] = '\0';
-	}
-	if ((want & WANT_DEV) && dev)
-		*dev = devmnt;
-	if ((want & WANT_FD) && outfd)
-		rc = get_root_fd(mnt.mnt_dir, outfd);
-	if ((want & WANT_NID) && nid) {
-		ptr_end = strchr(mnt.mnt_fsname, ':');
-		strncpy(nid, mnt.mnt_fsname, ptr_end - mnt.mnt_fsname);
-		nid[ptr_end - mnt.mnt_fsname] = '\0';
-	}
-
-out:
-	endmntent(fp);
-	return rc;
-}
-
-/*
- * Find the fsname, the full path, and/or an open fd.
- * Either the fsname or path must not be NULL
- */
-int get_root_path(int want, char *fsname, int *outfd, char *path, int index,
-		  dev_t *dev, char *nid)
-{
-	int rc = -ENODEV;
-
-	if (!(want & WANT_INDEX))
-		rc = get_root_path_fast(want, fsname, outfd, path, dev, nid);
-	if (rc)
-		rc = get_root_path_slow(want, fsname, outfd, path, index, dev,
-					nid);
-
-	if (!rc || !(want & WANT_ERROR))
-		return rc;
-
-	if (dev || !(want & WANT_DEV))
-		llapi_err_noerrno(LLAPI_MSG_ERROR,
-				  "'%u/%u' dev not on a mounted Lustre filesystem",
-				  major(*dev), minor(*dev));
-	else
-		llapi_err_noerrno(LLAPI_MSG_ERROR,
-				  "'%s' not on a mounted Lustre filesystem",
-				  (want & WANT_PATH) ? fsname : path);
-	return rc;
-}
-
-/*
- * search lustre mounts
- *
- * Calling this function will return to the user the mount point, mntdir, and
- * the file system name, fsname, if the user passed a buffer to this routine.
- *
- * The user inputs are pathname and index. If the pathname is supplied then
- * the value of the index will be ignored. The pathname will return data if
- * the pathname is located on a lustre mount. Index is used to pick which
- * mount point you want in the case of multiple mounted lustre file systems.
- * See function lfs_osts in lfs.c for an example of the index use.
- */
-int llapi_search_mounts(const char *pathname, int index, char *mntdir,
-			char *fsname)
-{
-	int want = WANT_PATH, idx = -1;
-
-	if (!pathname || pathname[0] == '\0') {
-		want |= WANT_INDEX;
-		idx = index;
-	} else {
-		strcpy(mntdir, pathname);
-	}
-
-	if (fsname)
-		want |= WANT_FSNAME;
-	return get_root_path(want, fsname, NULL, mntdir, idx, NULL, NULL);
-}
-
-/* Given a path, find the corresponding Lustre fsname */
-int llapi_search_fsname(const char *pathname, char *fsname)
-{
-	dev_t dev;
-	int rc;
-
-	rc = get_file_dev(pathname, &dev);
-	if (rc) {
-		char tmp[PATH_MAX];
-		char *parent;
-		int len;
-
-		/* file does not exist try the parent */
-		len = readlink(pathname, tmp, PATH_MAX);
-		if (len != -1)
-			tmp[len] = '\0';
-		else
-			strncpy(tmp, pathname, PATH_MAX - 1);
-
-		parent = dirname(tmp);
-		rc = get_file_dev(parent, &dev);
-	}
-
-	if (rc) {
-		llapi_error(LLAPI_MSG_ERROR, rc,
-			    "cannot resolve path '%s'", pathname);
-		return rc;
-	}
-
-	rc = get_root_path(WANT_FSNAME | WANT_ERROR, fsname, NULL, NULL, -1,
-			   &dev, NULL);
-
-	return rc;
-}
-
-int llapi_search_rootpath(char *pathname, const char *fsname)
-{
-	if (!pathname)
-		return -EINVAL;
-
-	/*
-	 * pathname can be used as an argument by get_root_path(),
-	 * clear it for safety
-	 */
-	pathname[0] = 0;
-	return get_root_path(WANT_PATH, (char *)fsname, NULL, pathname, -1,
-			     NULL, NULL);
-}
-
-int llapi_search_rootpath_by_dev(char *pathname, dev_t dev)
-{
-	if (!pathname)
-		return -EINVAL;
-
-	/*
-	 * pathname can be used as an argument by get_root_path(),
-	 * clear it for safety
-	 */
-	pathname[0] = 0;
-	return get_root_path(WANT_PATH, NULL, NULL, pathname, -1, &dev, NULL);
 }
 
 int llapi_getname(const char *path, char *buf, size_t size)
@@ -5364,12 +5030,13 @@ int root_ioctl(const char *mdtname, int opc, void *data, int *mdtidxp,
 	if (mdtidxp)
 		*mdtidxp = index;
 
+	/* mnt_fd is cached internally, no need to close it */
 	rc = ioctl(fd, opc, data);
 	if (rc == -1)
 		rc = -errno;
 	else
 		rc = 0;
-	close(fd);
+
 	return rc;
 }
 
@@ -5893,6 +5560,69 @@ out:
 }
 
 /**
+ * Convert a struct lu_fid into a struct file_handle
+ *
+ * \param[out] _handle	a newly allocated struct file_handle on success
+ * \param[in]  fid	a Lustre File IDentifier
+ *
+ * \retval		0 on success
+ * \retval		negative errno if an error occured
+ *
+ * On success, the caller is responsible for freeing \p handle.
+ */
+int llapi_fid_to_handle(struct file_handle **_handle, const struct lu_fid *fid)
+{
+	struct lustre_file_handle *lfh;
+	struct file_handle *handle;
+
+	if (!_handle || !fid)
+		return -EINVAL;
+
+	handle = calloc(1, sizeof(*handle) + sizeof(*lfh));
+	if (handle == NULL)
+		return -errno;
+
+	handle->handle_bytes = sizeof(*lfh);
+	handle->handle_type = FILEID_LUSTRE;
+	lfh = (struct lustre_file_handle *)handle->f_handle;
+	/* Only lfh->lfh_child needs to be set */
+	lfh->lfh_child = *fid;
+
+	*_handle = handle;
+	return 0;
+}
+
+/**
+ * Attempt to open a file with a Lustre File IDentifier
+ *
+ * \param[in] lustre_fd		an open file descriptor for an object in lustre
+ * \param[in] fid		a Lustre File IDentifier of the file to open
+ * \param[in] flags		open(2) flags
+ *
+ * \retval			non-negative file descriptor on success
+ * \retval			negative errno if an error occured
+ */
+int llapi_open_by_fid_at(int lustre_fd, const struct lu_fid *fid, int flags)
+{
+	struct file_handle *handle;
+	int fd;
+	int rc;
+
+	rc = llapi_fid_to_handle(&handle, fid);
+	if (rc < 0)
+		return rc;
+
+	/* Sadly open_by_handle_at() only works for root, but this is also the
+	 * case for the original approach of opening $MOUNT/.lustre/FID.
+	 */
+	fd = open_by_handle_at(lustre_fd, handle, flags);
+	rc = -errno;
+	free(handle);
+
+	return fd < 0 ? rc : fd;
+}
+
+/**
  * Attempt to open a file with Lustre file identifier \a fid
  * and return an open file descriptor.
  *
@@ -5906,16 +5636,20 @@ out:
 int llapi_open_by_fid(const char *lustre_dir, const struct lu_fid *fid,
 		      int flags)
 {
-	char mntdir[PATH_MAX];
-	char path[PATH_MAX + 64];
-	int rc;
 
-	rc = llapi_search_mounts(lustre_dir, 0, mntdir, NULL);
-	if (rc != 0)
-		return -1;
+	int mnt_fd, rc;
 
-	snprintf(path, sizeof(path), "%s/.lustre/fid/"DFID, mntdir, PFID(fid));
-	return open(path, flags);
+	/* this will return a cached FD if available, so only one open needed.
+	 * WANT_FD doesn't modify lustre_dir so casting away "const" is OK */
+	rc = get_root_path(WANT_FD, NULL, &mnt_fd, (char *)lustre_dir, 0, NULL,
+			   NULL);
+	if (rc)
+		goto out;
+
+	/* "mnt_fd" is cached internally for reuse, no need to close it */
+	rc = llapi_open_by_fid_at(mnt_fd, fid, flags);
+out:
+	return rc;
 }
 
 /**

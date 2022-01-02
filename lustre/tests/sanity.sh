@@ -13140,7 +13140,6 @@ run_test 154f "get parent fids by reading link ea"
 
 test_154g()
 {
-	[ -n "$FILESET" ] && skip "SKIP due to FILESET set"
 	[[ $MDS1_VERSION -ge $(version_code 2.6.92) &&
 	   $CLIENT_VERSION -gt $(version_code 2.6.99) ]] ||
 		skip "Need MDS version at least 2.6.92"
@@ -22021,11 +22020,9 @@ run_test 805 "ZFS can remove from full fs"
 check_lsom_data()
 {
 	local file=$1
-	local size=$($LFS getsom -s $file)
 	local expect=$(stat -c %s $file)
 
-	[[ $size == $expect ]] ||
-		error "$file expected size: $expect, got: $size"
+	check_lsom_size $1 $expect
 
 	local blocks=$($LFS getsom -b $file)
 	expect=$(stat -c %b $file)
@@ -22035,9 +22032,12 @@ check_lsom_data()
 
 check_lsom_size()
 {
-	local size=$($LFS getsom -s $1)
+	local size
 	local expect=$2
 
+	cancel_lru_locks mdc
+
+	size=$($LFS getsom -s $1)
 	[[ $size == $expect ]] ||
 		error "$file expected size: $expect, got: $size"
 }
