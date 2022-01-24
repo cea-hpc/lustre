@@ -1905,6 +1905,7 @@ out:
 static ssize_t
 ll_do_fast_read(struct kiocb *iocb, struct iov_iter *iter)
 {
+	struct ll_inode_info *lli = ll_i2info(file_inode(iocb->ki_filp));
 	ssize_t result;
 
 	if (!ll_sbi_has_fast_read(ll_i2sbi(file_inode(iocb->ki_filp))))
@@ -1913,6 +1914,9 @@ ll_do_fast_read(struct kiocb *iocb, struct iov_iter *iter)
 	/* NB: we can't do direct IO for fast read because it will need a lock
 	 * to make IO engine happy. */
 	if (iocb->ki_filp->f_flags & O_DIRECT)
+		return 0;
+
+	if (ll_layout_version_get(lli) == CL_LAYOUT_GEN_NONE)
 		return 0;
 
 	result = generic_file_read_iter(iocb, iter);
