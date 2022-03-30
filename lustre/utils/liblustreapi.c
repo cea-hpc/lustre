@@ -646,6 +646,8 @@ int llapi_file_open_param(const char *name, int flags, mode_t mode,
 		/* in case user gives the full pool name <fsname>.<poolname>,
 		 * strip the fsname */
 		char *ptr = strchr(pool_name, '.');
+		int nbr = 1;
+
 		if (ptr != NULL) {
 			*ptr = '\0';
 			if (strcmp(pool_name, fsname) != 0) {
@@ -659,9 +661,11 @@ int llapi_file_open_param(const char *name, int flags, mode_t mode,
 		}
 
 		/* Make sure the pool exists and is non-empty */
-		rc = llapi_search_ost(fsname, pool_name, NULL);
-		if (rc < 1) {
-			char *err = rc == 0 ? "has no OSTs" : "does not exist";
+		if (!lov_pool_is_ignored(pool_name))
+			nbr = llapi_search_ost(fsname, pool_name, NULL);
+
+		if (nbr < 1) {
+			char *err = !nbr ? "has no OSTs" : "does not exist";
 
 			llapi_err_noerrno(LLAPI_MSG_ERROR, "pool '%s.%s' %s",
 					  fsname, pool_name, err);
@@ -674,13 +678,17 @@ int llapi_file_open_param(const char *name, int flags, mode_t mode,
 	/* sanity check of target list */
 	if (param->lsp_is_specific) {
 		char ostname[MAX_OBD_NAME + 64];
+		char *pooltmp = NULL;
 		bool found = false;
 		int i;
+
+		if (!lov_pool_is_ignored(pool_name))
+			pooltmp = pool_name;
 
 		for (i = 0; i < param->lsp_stripe_count; i++) {
 			snprintf(ostname, sizeof(ostname), "%s-OST%04x_UUID",
 				 fsname, param->lsp_osts[i]);
-			rc = llapi_search_ost(fsname, pool_name, ostname);
+			rc = llapi_search_ost(fsname, pooltmp, ostname);
 			if (rc <= 0) {
 				if (rc == 0)
 					rc = -ENODEV;
@@ -2784,7 +2792,8 @@ static void lov_dump_user_lmm_header(struct lov_user_md *lum, char *path,
 			separator = "\n";
 	}
 
-	if ((verbose & VERBOSE_POOL) && pool_name && (pool_name[0] != '\0')) {
+	if ((verbose & VERBOSE_POOL) && pool_name && (pool_name[0] != '\0') &&
+	    (!lov_pool_is_ignored(pool_name) || is_raw)) {
 		llapi_printf(LLAPI_MSG_NORMAL, "%s", separator);
 		if (verbose & ~VERBOSE_POOL)
 			llapi_printf(LLAPI_MSG_NORMAL, "%s%spool:          ",
