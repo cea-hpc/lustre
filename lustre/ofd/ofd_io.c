@@ -556,6 +556,7 @@ static int ofd_preprw_read(const struct lu_env *env, struct obd_export *exp,
 	rc = dt_attr_get(env, ofd_object_child(fo), la);
 	if (unlikely(rc))
 		GOTO(buf_put, rc);
+	ofd_read_unlock(env, fo);
 
 	rc = dt_read_prep(env, ofd_object_child(fo), lnb, *nr_local);
 	if (unlikely(rc))
@@ -879,7 +880,6 @@ ofd_commitrw_read(const struct lu_env *env, struct ofd_device *ofd,
 	LASSERT(ofd_object_exists(fo));
 	dt_bufs_put(env, ofd_object_child(fo), lnb, niocount);
 
-	ofd_read_unlock(env, fo);
 	ofd_object_put(env, fo);
 	/* second put is pair to object_get in ofd_preprw_read */
 	ofd_object_put(env, fo);
