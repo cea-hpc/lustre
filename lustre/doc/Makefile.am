@@ -114,6 +114,8 @@ MANFILES =					\
 	llapi_path2fid.3			\
 	llapi_path2parent.3			\
 	llapi_quotactl.3			\
+	llapi_search_rootpath.3			\
+	llapi_search_rootpath_by_dev.3		\
 	ll_decode_filter_fid.8			\
 	ll_decode_linkea.8			\
 	llobdstat.8				\
