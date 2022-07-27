@@ -788,7 +788,8 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
 
 	if (it->it_op & IT_CREAT &&
 	    ll_i2sbi(parent)->ll_flags & LL_SBI_FILE_SECCTX) {
-		rc = ll_dentry_init_security(dentry, it->it_create_mode,
+		rc = ll_dentry_init_security(parent,
+					     dentry, it->it_create_mode,
 					     &dentry->d_name,
 					     &op_data->op_file_secctx_name,
 					     &op_data->op_file_secctx,
@@ -1288,7 +1289,8 @@ again:
 		GOTO(err_exit, err = PTR_ERR(op_data));
 
 	if (sbi->ll_flags & LL_SBI_FILE_SECCTX) {
-		err = ll_dentry_init_security(dchild, mode, &dchild->d_name,
+		err = ll_dentry_init_security(dir,
+					      dchild, mode, &dchild->d_name,
 					      &op_data->op_file_secctx_name,
 					      &op_data->op_file_secctx,
 					      &op_data->op_file_secctx_size);
