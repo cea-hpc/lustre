@@ -414,16 +414,16 @@ command_t cmdlist[] = {
 	 "\t		all_char  sum of characters % MDT_COUNT\n"},
         {"check", lfs_check, 0,
 	 "Display the status of MGTs, MDTs or OSTs (as specified in the command)\n"
-	 "or all the servers (MGTs, MDTs and OSTs).\n"
-	 "usage: check <mgts|osts|mdts|all>"},
-        {"osts", lfs_osts, 0, "list OSTs connected to client "
-         "[for specified path only]\n" "usage: osts [path]"},
-        {"mdts", lfs_mdts, 0, "list MDTs connected to client "
-         "[for specified path only]\n" "usage: mdts [path]"},
-        {"df", lfs_df, 0,
-         "report filesystem disk space usage or inodes usage"
-         "of each MDS and all OSDs or a batch belonging to a specific pool .\n"
-         "Usage: df [--inodes|-i] [--human-readable|-h] [--lazy|-l]\n"
+	 "or all the servers (MGTs, MDTs and OSTs) [for specified path only].\n"
+	 "usage: check {mgts|osts|mdts|all} [path]"},
+	{"osts", lfs_osts, 0, "list OSTs connected to client "
+	 "[for specified path only]\n" "usage: osts [path]"},
+	{"mdts", lfs_mdts, 0, "list MDTs connected to client "
+	 "[for specified path only]\n" "usage: mdts [path]"},
+	{"df", lfs_df, 0,
+	 "report filesystem disk space usage or inodes usage "
+	 "of each MDS and all OSDs or a batch belonging to a specific pool.\n"
+	 "Usage: df [--inodes|-i] [--human-readable|-h] [--lazy|-l]\n"
 	 "          [--pool|-p <fsname>[.<pool>]] [path]"},
         {"getname", lfs_getname, 0, "list instances and specified mount points "
          "[for specified path only]\n"
@@ -5606,7 +5606,7 @@ static int lfs_getname(int argc, char **argv)
 
 static int lfs_check(int argc, char **argv)
 {
-	char mntdir[PATH_MAX] = {'\0'};
+	char mntdir[PATH_MAX] = {'\0'}, path[PATH_MAX] = {'\0'};
 	int num_types = 1;
 	char *obd_types[3];
 	char obd_type1[4];
@@ -5614,7 +5614,7 @@ static int lfs_check(int argc, char **argv)
 	char obd_type3[4];
 	int rc;
 
-	if (argc != 2) {
+	if (argc < 2 || argc > 3) {
 		fprintf(stderr, "%s check: server type must be specified\n",
 			progname);
 		return CMD_HELP;
@@ -5643,7 +5643,14 @@ static int lfs_check(int argc, char **argv)
 		return CMD_HELP;
 	}
 
-        rc = llapi_search_mounts(NULL, 0, mntdir, NULL);
+	if (argc >= 3 && !realpath(argv[2], path)) {
+		rc = -errno;
+		fprintf(stderr, "error: invalid path '%s': %s\n",
+			argv[2], strerror(-rc));
+		return rc;
+	}
+
+	rc = llapi_search_mounts(path, 0, mntdir, NULL);
 	if (rc < 0 || mntdir[0] == '\0') {
 		fprintf(stderr,
 			"%s check: cannot find mounted Lustre filesystem: %s\n",
@@ -5651,7 +5658,7 @@ static int lfs_check(int argc, char **argv)
 		return rc;
 	}
 
-	rc = llapi_target_check(num_types, obd_types, mntdir);
+	rc = llapi_target_check(num_types, obd_types, path);
 	if (rc)
 		fprintf(stderr, "%s check: cannot check target '%s': %s\n",
 			progname, argv[1], strerror(-rc));

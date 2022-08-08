@@ -51,6 +51,7 @@
 #define WANT_INDEX  0x8
 #define WANT_ERROR  0x10
 #define WANT_DEV    0x20
+#define WANT_NID    0x40
 
 /* mount point listings in /proc/mounts */
 #ifndef PROC_MOUNTS
@@ -58,7 +59,7 @@
 #endif
 
 int get_root_path(int want, char *fsname, int *outfd, char *path, int index,
-		  dev_t *dev);
+		  dev_t *dev, char *nid);
 int root_ioctl(const char *mdtname, int opc, void *data, int *mdtidxp,
 	       int want_error);
 int llapi_ioctl_pack(struct obd_ioctl_data *data, char **pbuf, int max_len);
