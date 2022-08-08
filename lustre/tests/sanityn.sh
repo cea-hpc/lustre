@@ -473,7 +473,6 @@ test_16c() {
 }
 run_test 16c "verify data consistency on ldiskfs with cache disabled (b=17397)"
 
-
 test_17() { # bug 3513, 3667
 	remote_ost_nodsh && skip "remote OST with nodsh" && return
 
@@ -5217,6 +5216,40 @@ test_104() {
 	check_mdt_xtimes $mdtdev
 }
 run_test 104 "Verify that MDS stores atime/mtime/ctime during close"
+
+test_113 () {
+	(( MDS1_VERSION >= $(version_code 2.12.10) )) ||
+		skip "Need server version at least 2.12.10"
+
+	local instance
+	local nid
+
+	instance=$($LFS getname $DIR1 | sed -r -e "s#.*-([^ ]+).*#\1#g") ||
+		error "cannot get instance of $DIR1"
+
+	$LFS check osts $DIR1 | grep $instance ||
+		error "cannot find OSTs of instance $instance"
+
+	$LFS check osts $DIR1 | grep -v $instance
+	if (( $? == 0 )); then
+		error "find OSTs other than instance $instance"
+	fi
+
+	$LFS check osts | grep $instance ||
+		error "cannot find other OSTs"
+
+	nid=$(df $DIR2 | tail -1 | sed 's%:/.*%%') ||
+		error "cannot parse nid for $DIR2"
+
+	$LFS check mgts $DIR2 | grep MGC$nid ||
+		error "cannot find mgc of $nid"
+
+	$LFS check mgts $DIR2 | grep -v MGC$nid
+	if (( $? == 0 )); then
+		error "find MGTs other than nid $nid"
+	fi
+}
+run_test 113 "check servers of specified fs"
 
 log "cleanup: ======================================================"
 
