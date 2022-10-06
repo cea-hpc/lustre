@@ -823,8 +823,13 @@ static inline bool bdev_integrity_enabled(struct block_device *bdev, int rw)
 	kmem_cache_create(name, size, align, flags, ctor)
 #endif
 
-#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
-#define selinux_is_enabled() 1
+static inline bool ll_security_xattr_wanted(struct inode *in)
+{
+#ifdef CONFIG_SECURITY
+	return in->i_security && in->i_sb->s_security;
+#else
+	return false;
 #endif
+}
 
 #endif /* _LUSTRE_COMPAT_H */

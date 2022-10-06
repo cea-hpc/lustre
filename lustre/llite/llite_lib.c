@@ -101,6 +101,9 @@ static struct ll_sb_info *ll_init_sbi(void)
 		RETURN(NULL);
 	}
 
+	sbi->ll_secctx_name = NULL;
+	sbi->ll_secctx_name_size = 0;
+
 	sbi->ll_ra_info.ra_max_pages_per_file = min(pages / 32,
 					   SBI_DEFAULT_READAHEAD_MAX);
 	sbi->ll_ra_info.ra_max_pages = sbi->ll_ra_info.ra_max_pages_per_file;
@@ -162,6 +165,9 @@ static void ll_free_sbi(struct super_block *sb)
 			cl_cache_decref(sbi->ll_cache);
 			sbi->ll_cache = NULL;
 		}
+		if (sbi->ll_secctx_name)
+			ll_secctx_name_free(sbi);
+
 		OBD_FREE(sbi, sizeof(*sbi));
 	}
 	EXIT;
@@ -588,6 +594,11 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 		CERROR("lustre_lite: bad iget4 for root\n");
 		GOTO(out_root, err);
 	}
+
+	err = ll_secctx_name_store(root);
+	if (err < 0 && ll_security_xattr_wanted(root))
+		CWARN("%s: file security contextes not supported: rc = %d\n",
+		      ll_get_fsname(sb, NULL, 0), err);
 
 	checksum = sbi->ll_flags & LL_SBI_CHECKSUM;
 	if (sbi->ll_checksum_set) {

@@ -21764,6 +21764,40 @@ test_430c() {
 }
 run_test 430c "lseek: external tools check"
 
+test_434() {
+	local file
+	local getxattr_count
+	local mdc_stat_param="mdc.$FSNAME-MDT0000*.md_stats"
+	local p="$TMP/$TESTSUITE-$TESTNAME.parameters"
+
+	[[ $(getenforce) == "Disabled" ]] ||
+		skip "lsm selinux module have to be disabled for this test"
+
+	mkdir $DIR/$tdir || error "fail to create $DIR/$tdir"
+
+	touch $DIR/$tdir/$tfile-{001..100}
+
+	# disable the xattr cache
+	save_lustre_params client "llite.*.xattr_cache" > $p
+	lctl set_param llite.*.xattr_cache=0
+	stack_trap "restore_lustre_params < $p; rm -f $p" EXIT
+
+	# clear clients mdc stats
+	clear_stats $mdc_stat_param ||
+		error "fail to clear stats on mdc MDT0000"
+
+	for file in $DIR/$tdir/$tfile-{001..100}; do
+		getfattr -n security.selinux $file |&
+			grep -q "Operation not supported" ||
+			error "getxattr on security.selinux should return EOPNOTSUPP"
+	done
+
+	getxattr_count=$(calc_stats $mdc_stat_param "getxattr")
+	(( getxattr_count < 100 )) ||
+		error "client sent $getxattr_count getxattr RPCs to the MDS"
+}
+run_test 434 "Client should not send RPCs for security.selinux with SElinux disabled"
+
 prep_801() {
 	[[ $(lustre_version_code mds1) -lt $(version_code 2.9.55) ]] ||
 	[[ $OST1_VERSION -lt $(version_code 2.9.55) ]] &&
