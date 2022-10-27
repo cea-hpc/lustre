@@ -703,7 +703,8 @@ int mdc_enqueue_send(const struct lu_env *env, struct obd_export *exp,
 	struct ldlm_intent *lit;
 	enum ldlm_mode mode;
 	bool glimpse = *flags & LDLM_FL_HAS_INTENT;
-	__u64 match_flags = *flags;
+	__u64 search_flags = *flags;
+	__u64 match_flags = 0;
 	int rc;
 
 	ENTRY;
@@ -713,13 +714,16 @@ int mdc_enqueue_send(const struct lu_env *env, struct obd_export *exp,
 		mode |= LCK_PW;
 
 	if (glimpse)
-		match_flags |= LDLM_FL_BLOCK_GRANTED;
+		search_flags |= LDLM_FL_BLOCK_GRANTED;
+	if (mode == LCK_GROUP)
+		match_flags = LDLM_MATCH_GROUP;
 	/* DOM locking uses LDLM_FL_KMS_IGNORE to mark locks wich have no valid
 	 * LVB information, e.g. canceled locks or locks of just pruned object,
 	 * such locks should be skipped.
 	 */
-	mode = ldlm_lock_match(obd->obd_namespace, match_flags, res_id,
-			       einfo->ei_type, policy, mode, &lockh);
+	mode = ldlm_lock_match_with_skip(obd->obd_namespace, search_flags, 0,
+					 res_id, einfo->ei_type, policy, mode,
+					 &lockh, match_flags);
 	if (mode) {
 		struct ldlm_lock *matched;
 
