@@ -3529,6 +3529,8 @@ struct close_data {
 		__u16				cd_mirror_id;
 		/* PCC release */
 		__u32				cd_archive_id;
+		/* migrate swap layout */
+		__u64				cd_data_version2;
 	};
 };
 
