@@ -6277,6 +6277,7 @@ static int lfs_getdirstripe(int argc, char **argv)
 			param.fp_recursive = 1;
 			break;
 		case 'v':
+			param.fp_verbose |= VERBOSE_DEFAULT;
 			param.fp_verbose |= VERBOSE_DETAIL;
 			break;
 		case 'X':
