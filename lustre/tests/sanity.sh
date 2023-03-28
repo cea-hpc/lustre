@@ -15483,14 +15483,12 @@ test_205a() { # Job stats
 
 	local old_jobenv=$($LCTL get_param -n jobid_var)
 	[ $old_jobenv != $JOBENV ] && jobstats_set $JOBENV
+	stack_trap "jobstats_set $old_jobenv" EXIT
 
-	if [[ $PERM_CMD = *"set_param -P"* ]]; then
-		stack_trap "do_facet mgs $PERM_CMD jobid_var=$old_jobenv" EXIT
-	else
-		stack_trap "do_facet mgs $PERM_CMD \
-			$FSNAME.sys.jobid_var=$old_jobenv" EXIT
-	fi
 	changelog_register
+
+	local old_jobid_name=$($LCTL get_param jobid_name)
+	stack_trap "$LCTL set_param $old_jobid_name" EXIT
 
 	local old_interval=$(do_facet $SINGLEMDS lctl get_param -n \
 				mdt.*.job_cleanup_interval | head -n 1)
@@ -15591,6 +15589,55 @@ test_205b() {
 	true
 }
 run_test 205b "Verify job stats jobid parsing"
+
+__test_205_jobstats_dump() {
+	local -a pids
+	local nbr_instance=$1
+
+	while true; do
+		if (( ${#pids[@]} >= nbr_instance )); then
+			wait ${pids[@]}
+			pids=()
+		fi
+
+		do_facet mds1 "$LCTL get_param mdt.*.job_stats > /dev/null" &
+		pids+=( $! )
+	done
+}
+
+__test_205_cleanup() {
+	kill $@
+	# Clear all job entries
+	do_facet mds1 "$LCTL set_param mdt.*.job_stats=clear"
+}
+
+test_205g() {
+	local -a mds1_params
+	local -a cli_params
+	local pids
+	local interval=5
+
+	mds1_params=( $(do_facet mds1 $LCTL get_param mdt.*.job_cleanup_interval) )
+	do_facet mds1 $LCTL set_param mdt.*.job_cleanup_interval=$interval
+	stack_trap "do_facet mds1 $LCTL set_param ${mds1_params[*]}" EXIT
+
+	cli_params=( $($LCTL get_param jobid_name jobid_var) )
+	$LCTL set_param jobid_var=TEST205G_ID jobid_name=%j.%p
+	stack_trap "$LCTL set_param ${cli_params[*]}" EXIT
+
+	# start jobs loop
+	export TEST205G_ID=205g
+	stack_trap "unset TEST205G_ID" EXIT
+	while true; do
+		printf $DIR/$tfile.{0001..1000} | xargs -P10 -n1 touch
+	done & pids="$! "
+
+	__test_205_jobstats_dump 4 & pids+="$! "
+	stack_trap "__test_205_cleanup $pids" EXIT INT
+
+	[[ $SLOW == "no" ]] && sleep 90 || sleep 240
+}
+run_test 205g "stress test for job_stats procfile"
 
 # LU-1480, LU-1773 and LU-1657
 test_206() {
