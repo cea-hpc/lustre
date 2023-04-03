@@ -535,6 +535,22 @@ AC_DEFUN([LB_JBD2_JOURNAL_GET_MAX_TXN_BUFS], [
 	])
 ]) # LB_JBD2_JOURNAL_GET_MAX_TXN_BUFS
 
+# LB_HAVE_INODE_IVERSION
+#
+AC_DEFUN([LB_HAVE_INODE_IVERSION], [
+LB_CHECK_COMPILE([if iversion primitives defined],
+inode_set_iversion, [
+	#include <linux/iversion.h>
+],[
+	struct inode i;
+
+	inode_set_iversion(&i, 0);
+],[
+	AC_DEFINE(HAVE_INODE_IVERSION, 1,
+		[iversion primitives defined])
+])
+]) # LB_HAVE_INODE_IVERSION
+
 #
 # LB_CONFIG_LDISKFS
 #
@@ -580,6 +596,7 @@ AS_IF([test x$enable_ldiskfs != xno],[
 	LDISKFS_AC_PATCH_PROGRAM
 	LB_EXT4_GET_BLOCKS_KEEP_SIZE
 	LB_EXT4_INC_DEC_COUNT_2ARGS
+	LB_HAVE_INODE_IVERSION
 	AC_DEFINE(CONFIG_LDISKFS_FS_POSIX_ACL, 1, [posix acls for ldiskfs])
 	AC_DEFINE(CONFIG_LDISKFS_FS_SECURITY, 1, [fs security for ldiskfs])
 	AC_DEFINE(CONFIG_LDISKFS_FS_XATTR, 1, [extened attributes for ldiskfs])

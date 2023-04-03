@@ -246,6 +246,7 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_MDS_CHANGELOG_DEL	 0x16c
 #define OBD_FAIL_MDS_CHANGELOG_IDX_PUMP	 0x16d
 #define OBD_FAIL_MDS_DELAY_DELORPHAN	 0x16e
+/* continue at 0x2400, see below */
 
 /* layout lock */
 #define OBD_FAIL_MDS_NO_LL_GETATTR	 0x170
@@ -743,6 +744,11 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_BARRIER_FAILURE		0x2203
 
 #define OBD_FAIL_OSD_FAIL_AT_TRUNCATE		0x2301
+
+/* continuation of MDS related constants */
+#define OBD_FAIL_MDS_PAUSE_CREATE_AFTER_LOOKUP	0x2401
+
+/* PLEASE, KEEP NUMBERS UP TO 0x3000 RESERVED FOR OBD_FAIL_MDS_* */
 
 /* LNet is allocated failure locations 0xe000 to 0xffff */
 /* Assign references to moved code to reduce code changes */
