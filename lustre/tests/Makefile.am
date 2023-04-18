@@ -74,7 +74,7 @@ THETESTS += listxattr_size_check check_fhandle_syscalls badarea_io
 THETESTS += llapi_layout_test orphan_linkea_check llapi_hsm_test
 THETESTS += group_lock_test llapi_fid_test sendfile_grouplock mmap_cat
 THETESTS += swap_lock_test lockahead_test mirror_io mmap_mknod_test
-THETESTS += expand_truncate_test lseek_test
+THETESTS += expand_truncate_test lseek_test llapi_root_test
 
 
 if TESTS
@@ -98,6 +98,7 @@ llapi_layout_test_LDADD = $(LIBLUSTREAPI)
 llapi_hsm_test_LDADD = $(LIBLUSTREAPI)
 group_lock_test_LDADD = $(LIBLUSTREAPI)
 llapi_fid_test_LDADD = $(LIBLUSTREAPI)
+llapi_root_test_LDADD = $(LIBLUSTREAPI) -lpthread
 sendfile_grouplock_LDADD = $(LIBLUSTREAPI)
 swap_lock_test_LDADD = $(LIBLUSTREAPI)
 statmany_LDADD = $(LIBLUSTREAPI)
