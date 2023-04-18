@@ -84,6 +84,7 @@ THETESTS += create_foreign_file parse_foreign_file
 THETESTS += create_foreign_dir parse_foreign_dir
 THETESTS += check_fallocate splice-test lseek_test expand_truncate_test
 THETESTS += foreign_symlink_striping lov_getstripe_old fadvise_dontneed_helper
+THETESTS += llapi_root_test
 
 if LIBAIO
 THETESTS += aiocp
@@ -120,6 +121,7 @@ llapi_layout_test_LDADD = $(LIBLUSTREAPI)
 llapi_hsm_test_LDADD = $(LIBLUSTREAPI)
 group_lock_test_LDADD = $(LIBLUSTREAPI)
 llapi_fid_test_LDADD = $(LIBLUSTREAPI)
+llapi_root_test_LDADD = $(LIBLUSTREAPI) -lpthread
 rw_seq_cst_vs_drop_caches_LDADD = $(PTHREAD_LIBS)
 sendfile_grouplock_LDADD = $(LIBLUSTREAPI)
 swap_lock_test_LDADD = $(LIBLUSTREAPI)
