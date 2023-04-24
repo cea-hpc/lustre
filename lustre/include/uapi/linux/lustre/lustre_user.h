@@ -1493,21 +1493,38 @@ struct if_quotactl {
 };
 
 /* swap layout flags */
-#define SWAP_LAYOUTS_CHECK_DV1		(1 << 0)
-#define SWAP_LAYOUTS_CHECK_DV2		(1 << 1)
-#define SWAP_LAYOUTS_KEEP_MTIME		(1 << 2)
-#define SWAP_LAYOUTS_KEEP_ATIME		(1 << 3)
-#define SWAP_LAYOUTS_CLOSE		(1 << 4)
+enum lustre_swap_layouts_flags {
+	SWAP_LAYOUTS_CHECK_DV1		= 0x00000001,
+	SWAP_LAYOUTS_CHECK_DV2		= 0x00000002,
+	SWAP_LAYOUTS_KEEP_MTIME		= 0x00000004,
+	SWAP_LAYOUTS_KEEP_ATIME		= 0x00000008,
+	SWAP_LAYOUTS_CLOSE		= 0x00000010,
+	/* Sent to the MDT through mdc_swap_layouts::msl_flags to indicate that
+	 * mdc_swap_layouts contains valid msl_dv1 and msl_dv2.
+	 *
+	 * /!\ If we define a flag whose value is 0x20000000 (the swab'ed
+	 * version of SWAP_LAYOUTS_WITH_DV), lustre_swab_swap_layouts must
+	 * be updated as it checks for this flag in mdc_swap_layouts::msl_flags
+	 * in both types of endianness.
+	 */
+	SWAP_LAYOUTS_WITH_DV		= 0x00000020,
+	/* Skip the UID/GID check before a swap layout for a release
+	 * (server only)
+	 */
+	SWAP_LAYOUTS_MDS_RELEASE	= 0x80000000,
 
-/* Skip the UID/GID check before a swap layout for a release (server only) */
-#define SWAP_LAYOUTS_MDS_RELEASE	(1 << 31)
+	/* ensure that the enum is 64 bits long for struct lustre_swap_layouts
+	 * and mdc_swap_layouts
+	 */
+	SWAP_LAYOUTS_LAST		= ~0x0ULL,
+};
 
 struct lustre_swap_layouts {
-	__u64	sl_flags;
-	__u32	sl_fd;
-	__u32	sl_gid;
-	__u64	sl_dv1;
-	__u64	sl_dv2;
+	enum lustre_swap_layouts_flags	sl_flags:64;
+	__u32				sl_fd;
+	__u32				sl_gid;
+	__u64				sl_dv1;
+	__u64				sl_dv2;
 };
 
 /** Bit-mask of valid attributes */

@@ -1771,12 +1771,15 @@ static void mdt_swap_lov_flag(struct mdt_object *o1, struct mdt_object *o2)
 
 static int mdt_swap_layouts(struct tgt_session_info *tsi)
 {
-	struct mdt_thread_info	*info;
-	struct ptlrpc_request	*req = tgt_ses_req(tsi);
-	struct obd_export	*exp = req->rq_export;
-	struct mdt_object	*o1, *o2, *o;
-	struct mdt_lock_handle	*lh1, *lh2;
+	struct ptlrpc_request *req = tgt_ses_req(tsi);
+	struct obd_export *exp = req->rq_export;
+	struct mdt_lock_handle *lh1, *lh2;
+	struct mdt_object *o1, *o2, *o;
+	struct mdt_thread_info *info;
 	struct mdc_swap_layouts *msl;
+	bool swap_objects = false;
+	__u64 dv1 = 0;
+	__u64 dv2 = 0;
 	int rc;
 
 	ENTRY;
@@ -1811,8 +1814,10 @@ static int mdt_swap_layouts(struct tgt_session_info *tsi)
 	if (unlikely(rc == 0)) /* same file, you kidding me? no-op. */
 		GOTO(put, rc);
 
-	if (rc < 0)
+	if (rc < 0) {
+		swap_objects = true;
 		swap(o1, o2);
+	}
 
 	/* permission check. Make sure the calling process having permission
 	 * to write both files. */
@@ -1830,6 +1835,14 @@ static int mdt_swap_layouts(struct tgt_session_info *tsi)
 	if (msl == NULL)
 		GOTO(put, rc = -EPROTO);
 
+	if (msl->msl_flags & SWAP_LAYOUTS_WITH_DV) {
+		dv1 = msl->msl_dv1;
+		dv2 = msl->msl_dv2;
+
+		if (swap_objects)
+			swap(dv1, dv2);
+	}
+
 	lh1 = &info->mti_lh[MDT_LH_NEW];
 	mdt_lock_reg_init(lh1, LCK_EX);
 	lh2 = &info->mti_lh[MDT_LH_OLD];
@@ -1846,7 +1859,7 @@ static int mdt_swap_layouts(struct tgt_session_info *tsi)
 		GOTO(unlock1, rc);
 
 	rc = mo_swap_layouts(info->mti_env, mdt_object_child(o1),
-			     mdt_object_child(o2), 0, 0, msl->msl_flags);
+			     mdt_object_child(o2), dv1, dv2, msl->msl_flags);
 	if (rc < 0)
 		GOTO(unlock2, rc);
 
