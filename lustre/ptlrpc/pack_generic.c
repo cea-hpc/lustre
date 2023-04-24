@@ -2969,7 +2969,23 @@ void lustre_swab_hsm_request(struct hsm_request *hr)
 
 void lustre_swab_swap_layouts(struct mdc_swap_layouts *msl)
 {
-	__swab64s(&msl->msl_flags);
+#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(3, 4, 53, 0)
+	/* Only swab flags if dv1/dv2 fields are sent by client, to avoid access
+	 * beyond the end of old struct mdc_swap_layouts.  Eventually, we can
+	 * assume that these fields are safe to use.
+	 *
+	 * /!\ this works as long as the client does not send the flag
+	 * 0x20000000 in msl_flags
+	 */
+	if (!(msl->msl_flags & SWAP_LAYOUTS_WITH_DV) &&
+	    !(msl->msl_flags & __swab64(SWAP_LAYOUTS_WITH_DV))) {
+		msl->msl_flags = __swab64(msl->msl_flags);
+		return;
+	}
+ #endif
+	msl->msl_flags = __swab64(msl->msl_flags);
+	__swab64s(&msl->msl_dv1);
+	__swab64s(&msl->msl_dv2);
 }
 
 void lustre_swab_close_data(struct close_data *cd)
