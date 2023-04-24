@@ -2972,6 +2972,13 @@ void lustre_swab_swap_layouts(struct mdc_swap_layouts *msl)
 	__swab64s(&msl->msl_flags);
 }
 
+void lustre_swab_swap_layouts_dv(struct mdc_swap_layouts_dv *msldv)
+{
+
+	__swab64s(&msldv->msld_dv1);
+	__swab64s(&msldv->msld_dv2);
+}
+
 void lustre_swab_close_data(struct close_data *cd)
 {
 

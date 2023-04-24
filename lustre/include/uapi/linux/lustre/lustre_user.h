@@ -1499,6 +1499,11 @@ struct if_quotactl {
 #define SWAP_LAYOUTS_KEEP_ATIME		(1 << 3)
 #define SWAP_LAYOUTS_CLOSE		(1 << 4)
 
+/* Sent to the MDT through mdc_swap_layouts::msl_flags to indicate that
+ * mdc_swap_layouts_dv has been initialized in RQF_MDS_SWAP_LAYOUTS RPC.
+ */
+#define SWAP_LAYOUTS_WITH_DV		(1 << 5)
+
 /* Skip the UID/GID check before a swap layout for a release (server only) */
 #define SWAP_LAYOUTS_MDS_RELEASE	(1 << 31)
 

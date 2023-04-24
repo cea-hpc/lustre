@@ -3512,6 +3512,17 @@ struct mdc_swap_layouts {
 	__u64           msl_flags;
 } __attribute__((packed));
 
+struct mdc_swap_layouts_dv {
+	__u64 msld_dv1; /* data version of file 1 */
+	__u64 msld_dv2; /* data version of file 2 */
+};
+
+/* To carry two structures to the mdc_ioc_swap_layouts */
+struct mdc_swap_layouts_data {
+	struct mdc_swap_layouts msl;
+	struct mdc_swap_layouts_dv msldv;
+};
+
 #define INLINE_RESYNC_ARRAY_SIZE	15
 struct close_data_resync_done {
 	__u32	resync_count;

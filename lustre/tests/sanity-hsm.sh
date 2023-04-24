@@ -5794,7 +5794,7 @@ test_607a()
 		error "could not restore file after non blocking migrate"
 	wait_request_state $fid RESTORE SUCCEED
 }
-run_test 607a "release a file that was migrated after being archived"
+run_test 607a "release a file that was migrated after being archived (non blocking migrate)"
 
 test_607b()
 {
@@ -5872,6 +5872,30 @@ test_607c()
 
 }
 run_test 607c "'lfs swap_layouts' should set dirty flag on HSM file"
+
+test_607d()
+{
+	local d="$DIR/$tdir"
+	local f="$DIR/$tdir/$tfile"
+	local fid
+
+	test_hsm_migrate_check_skip
+	mkdir_on_mdt0 "$d"
+	fid=$(create_small_file "$f")
+
+	copytool setup
+
+	$LFS hsm_archive "$f" || error "could not archive file"
+	wait_request_state $fid ARCHIVE SUCCEED
+
+	$LFS migrate -b -i 1 "$f" ||
+		error "could not migrate file to OST 1"
+
+	$LFS hsm_release "$f" || error "could not release file after migrate"
+	$LFS hsm_restore "$f" || error "could not restore file after migrate"
+	wait_request_state $fid RESTORE SUCCEED
+}
+run_test 607d "release a file that was migrated after being archived (blocking migrate)"
 
 complete $SECONDS
 check_and_cleanup_lustre
