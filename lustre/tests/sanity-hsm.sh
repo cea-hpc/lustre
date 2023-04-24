@@ -5784,7 +5784,7 @@ test_607a()
 	local fid
 
 	(( MDS1_VERSION >= $(version_code 2.15.6) )) ||
-		skip "need MDS version at least 2.15.6"
+		skip "need MDS >= 2.15.6 to support release after non-blocking migration"
 
 	(( OSTCOUNT >= 2 )) || skip_env "needs >= 2 OSTs"
 
@@ -5799,12 +5799,12 @@ test_607a()
 		error "could not migrate file to OST 1"
 
 	$LFS hsm_release "$f" ||
-		error "could not release file after non blocking migrate"
+		error "could not release file after non-blocking migrate"
 	$LFS hsm_restore "$f" ||
-		error "could not restore file after non blocking migrate"
+		error "could not restore file after non-blocking migrate"
 	wait_request_state $fid RESTORE SUCCEED
 }
-run_test 607a "release a file that was migrated after being archived"
+run_test 607a "release file migrated after archive (non-blocking migrate)"
 
 test_607b()
 {
@@ -5816,7 +5816,7 @@ test_607b()
 	local fid
 
 	(( MDS1_VERSION >= $(version_code 2.15.6) )) ||
-		skip "need MDS version at least 2.15.6"
+		skip "need MDS >= 2.15.6 to support release after non-blocking migration"
 
 	(( OSTCOUNT >= 2 )) || skip_env "needs >= 2 OSTs"
 
@@ -5835,16 +5835,13 @@ test_607b()
 	echo 10 >> "$f"
 
 	old_hsm=$(get_hsm_xattr_sha "$f")
-	$LFS migrate -n -i 1 "$f" ||
-		error "could not migrate file to OST 1"
+	$LFS migrate -n -i 1 "$f" || error "could not migrate file to OST 1"
 
 	$LFS hsm_state "$f" | grep dirty || error "dirty flag not found"
 
 	new_hsm=$(get_hsm_xattr_sha "$f")
-	[ "$old_hsm" != "$new_hsm" ] &&
+	[[ "$old_hsm" == "$new_hsm" ]] ||
 		 error "migrate should not modify data version of dirty files"
-
-	return 0
 }
 run_test 607b "Migrate should not change the HSM attribute of dirty files"
 
@@ -5856,7 +5853,7 @@ test_607c()
 	local nbr_dirty
 
 	(( MDS1_VERSION >= $(version_code 2.15.6) )) ||
-		skip "need MDS version at least 2.15.6"
+		skip "need MDS >= 2.15.6 to support release after non-blocking migration"
 
 	mkdir_on_mdt0 $d
 	fid1=$(create_small_file "$f-1")
@@ -5885,6 +5882,32 @@ test_607c()
 
 }
 run_test 607c "'lfs swap_layouts' should set dirty flag on HSM file"
+
+test_607d()
+{
+	local d="$DIR/$tdir"
+	local f="$DIR/$tdir/$tfile"
+	local fid
+
+	(( MDS1_VERSION >= $(version_code 2.15.6) )) ||
+		skip "need MDS >= 2.15.6 to support release after blocking migration"
+
+	(( OSTCOUNT >= 2 )) || skip_env "needs >= 2 OSTs"
+
+	fid=$(test_hsm_migrate_init "$d" "$f" | tail -1)
+
+	copytool setup
+
+	$LFS hsm_archive "$f" || error "could not archive file"
+	wait_request_state $fid ARCHIVE SUCCEED
+
+	$LFS migrate -b -i 1 "$f" || error "could not migrate file to OST 1"
+
+	$LFS hsm_release "$f" || error "could not release file after migrate"
+	$LFS hsm_restore "$f" || error "could not restore file after migrate"
+	wait_request_state $fid RESTORE SUCCEED
+}
+run_test 607d "release file migrated after archive (blocking migrate)"
 
 complete $SECONDS
 check_and_cleanup_lustre

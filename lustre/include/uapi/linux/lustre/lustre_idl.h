@@ -3510,9 +3510,14 @@ struct out_read_reply {
 
 /** layout swap request structure
  * fid1 and fid2 are in mdt_body
+ *
+ * /!\ msl_dv1 and msl_dv2 are valid only if msl_flags contains
+ * SWAP_LAYOUTS_WITH_DV
  */
 struct mdc_swap_layouts {
-	__u64           msl_flags;
+	enum lustre_swap_layouts_flags	msl_flags:64;
+	__u64				msl_dv1; /* data version of file 1 */
+	__u64				msl_dv2; /* data version of file 2 */
 } __attribute__((packed));
 
 #define INLINE_RESYNC_ARRAY_SIZE	15
