@@ -2394,6 +2394,20 @@ static void check_layout_intent(void)
 	CHECK_VALUE(LAYOUT_INTENT_RESTORE);
 }
 
+static void check_swap_layout(void)
+{
+	BLANK_LINE();
+	COMMENT("Checks for struct mdc_swap_layouts and mdc_swap_layouts_dv");
+
+	CHECK_STRUCT(mdc_swap_layouts);
+	CHECK_MEMBER(mdc_swap_layouts, msl_flags);
+
+	CHECK_STRUCT(mdc_swap_layouts_dv);
+	CHECK_MEMBER(mdc_swap_layouts_dv, msld_dv1);
+	CHECK_MEMBER(mdc_swap_layouts_dv, msld_dv2);
+}
+
+
 static void check_hsm_state_set(void)
 {
 	BLANK_LINE();
@@ -3253,6 +3267,7 @@ printf("#endif /* HAVE_SERVER_SUPPORT */\n");
 	check_link_ea_header();
 	check_link_ea_entry();
 	check_layout_intent();
+	check_swap_layout();
 	check_hsm_action_item();
 	check_hsm_action_list();
 	check_hsm_progress();
