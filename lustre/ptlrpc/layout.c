@@ -335,7 +335,8 @@ static const struct req_msg_field *mdt_swap_layouts[] = {
 	&RMF_SWAP_LAYOUTS,
 	&RMF_CAPA1,
 	&RMF_CAPA2,
-	&RMF_DLM_REQ
+	&RMF_DLM_REQ,
+	&RMF_SWAP_LAYOUTS_DV,
 };
 
 static const struct req_msg_field *mds_rmfid_client[] = {
@@ -1280,6 +1281,11 @@ struct req_msg_field RMF_SWAP_LAYOUTS =
 	DEFINE_MSGF("swap_layouts", 0, sizeof(struct  mdc_swap_layouts),
 		    lustre_swab_swap_layouts, NULL);
 EXPORT_SYMBOL(RMF_SWAP_LAYOUTS);
+
+struct req_msg_field RMF_SWAP_LAYOUTS_DV =
+	DEFINE_MSGF("swap_layouts_dv", 0, sizeof(struct mdc_swap_layouts_dv),
+		    lustre_swab_swap_layouts_dv, NULL);
+EXPORT_SYMBOL(RMF_SWAP_LAYOUTS_DV);
 
 struct req_msg_field RMF_LFSCK_REQUEST =
 	DEFINE_MSGF("lfsck_request", 0, sizeof(struct lfsck_request),

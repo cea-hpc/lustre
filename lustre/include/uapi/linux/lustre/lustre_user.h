@@ -1493,17 +1493,25 @@ struct if_quotactl {
 };
 
 /* swap layout flags */
-#define SWAP_LAYOUTS_CHECK_DV1		(1 << 0)
-#define SWAP_LAYOUTS_CHECK_DV2		(1 << 1)
-#define SWAP_LAYOUTS_KEEP_MTIME		(1 << 2)
-#define SWAP_LAYOUTS_KEEP_ATIME		(1 << 3)
-#define SWAP_LAYOUTS_CLOSE		(1 << 4)
-
+enum lustre_swap_layouts_flags {
+	SWAP_LAYOUTS_CHECK_DV1		= 0x000000001,
+	SWAP_LAYOUTS_CHECK_DV2		= 0x000000002,
+	SWAP_LAYOUTS_KEEP_MTIME		= 0x000000004,
+	SWAP_LAYOUTS_KEEP_ATIME		= 0x000000008,
+	SWAP_LAYOUTS_CLOSE		= 0x000000010,
+/* Sent to the MDT through mdc_swap_layouts::msl_flags to indicate that
+ * mdc_swap_layouts_dv has been initialized in RQF_MDS_SWAP_LAYOUTS RPC.
+ */
+	SWAP_LAYOUTS_WITH_DV		= 0x000000020,
 /* Skip the UID/GID check before a swap layout for a release (server only) */
-#define SWAP_LAYOUTS_MDS_RELEASE	(1 << 31)
+	SWAP_LAYOUTS_MDS_RELEASE	= 0x080000000,
+
+/* ensure that the enum is 64 bits long for struct lustre_swap_layouts */
+	SWAP_LAYOUTS_LAST		= ~0x0ULL,
+};
 
 struct lustre_swap_layouts {
-	__u64	sl_flags;
+	enum lustre_swap_layouts_flags	sl_flags:64;
 	__u32	sl_fd;
 	__u32	sl_gid;
 	__u64	sl_dv1;

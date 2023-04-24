@@ -121,6 +121,7 @@ void lustre_swab_hsm_user_state(struct hsm_user_state *hus);
 void lustre_swab_hsm_user_item(struct hsm_user_item *hui);
 void lustre_swab_hsm_request(struct hsm_request *hr);
 void lustre_swab_swap_layouts(struct mdc_swap_layouts *msl);
+void lustre_swab_swap_layouts_dv(struct mdc_swap_layouts_dv *msld);
 void lustre_swab_close_data(struct close_data *data);
 void lustre_swab_close_data_resync_done(struct close_data_resync_done *resync);
 void lustre_swab_close_data_special(struct close_data *cd, enum mds_op_bias b);

@@ -366,6 +366,7 @@ extern struct req_msg_field RMF_OBD_QUOTACTL_POOL;
 extern struct req_msg_field RMF_QUOTA_BODY;
 extern struct req_msg_field RMF_STRING;
 extern struct req_msg_field RMF_SWAP_LAYOUTS;
+extern struct req_msg_field RMF_SWAP_LAYOUTS_DV;
 extern struct req_msg_field RMF_MDS_HSM_PROGRESS;
 extern struct req_msg_field RMF_MDS_HSM_REQUEST;
 extern struct req_msg_field RMF_MDS_HSM_USER_ITEM;

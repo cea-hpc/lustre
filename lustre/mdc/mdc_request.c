@@ -2112,13 +2112,17 @@ out:
 static int mdc_ioc_swap_layouts(struct obd_export *exp,
 				struct md_op_data *op_data)
 {
+	struct mdc_swap_layouts_data *msld;
+	struct mdc_swap_layouts_dv *msldv;
+	struct mdc_swap_layouts *msl;
+	struct ptlrpc_request *req;
 	LIST_HEAD(cancels);
-	struct ptlrpc_request	*req;
-	int			 rc, count;
-	struct mdc_swap_layouts *msl, *payload;
+	int count;
+	int rc;
+
 	ENTRY;
 
-	msl = op_data->op_data;
+	msld = op_data->op_data;
 
 	/* When the MDT will get the MDS_SWAP_LAYOUTS RPC the
 	 * first thing it will do is to cancel the 2 layout
@@ -2148,10 +2152,13 @@ static int mdc_ioc_swap_layouts(struct obd_export *exp,
 
 	mdc_swap_layouts_pack(&req->rq_pill, op_data);
 
-	payload = req_capsule_client_get(&req->rq_pill, &RMF_SWAP_LAYOUTS);
-	LASSERT(payload);
+	msl = req_capsule_client_get(&req->rq_pill, &RMF_SWAP_LAYOUTS);
+	LASSERT(msl);
+	*msl = msld->msl;
 
-	*payload = *msl;
+	msldv = req_capsule_client_get(&req->rq_pill, &RMF_SWAP_LAYOUTS_DV);
+	LASSERT(msldv);
+	*msldv = msld->msldv;
 
 	ptlrpc_request_set_replen(req);
 
