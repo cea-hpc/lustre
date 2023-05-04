@@ -110,6 +110,9 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	int rc;
 	ENTRY;
 
+	/* VFS has locked the inode before calling this */
+	ll_set_inode_lock_owner(inode);
+
 	/* When setxattr() is called with a size of 0 the value is
 	 * unconditionally replaced by "". When removexattr() is
 	 * called we get a NULL value and XATTR_REPLACE for flags. */
@@ -121,25 +124,25 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	/* FIXME: enable IMA when the conditions are ready */
 	if (handler->flags == XATTR_SECURITY_T &&
 	    (!strcmp(name, "ima") || !strcmp(name, "evm")))
-		RETURN(-EOPNOTSUPP);
+		GOTO(out, rc = -EOPNOTSUPP);
 
 	rc = xattr_type_filter(sbi, handler);
 	if (rc)
-		RETURN(rc);
+		GOTO(out, rc);
 
 	if ((handler->flags == XATTR_ACL_ACCESS_T ||
 	     handler->flags == XATTR_ACL_DEFAULT_T) &&
 	    !inode_owner_or_capable(mnt_userns, inode))
-		RETURN(-EPERM);
+		GOTO(out, rc = -EPERM);
 
 	/* b10667: ignore lustre special xattr for now */
 	if (((handler->flags == XATTR_TRUSTED_T && !strcmp(name, "lov")) ||
 	     (handler->flags == XATTR_LUSTRE_T && !strcmp(name, "lov"))))
-		RETURN(0);
+		GOTO(out, rc = 0);
 
 	rc = ll_security_secctx_name_filter(sbi, handler->flags, name);
 	if (rc)
-		RETURN(rc);
+		GOTO(out, rc);
 
 	/*
 	 * In user.* namespace, only regular files and directories can have
@@ -147,7 +150,7 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	 */
 	if (handler->flags == XATTR_USER_T) {
 		if (!S_ISREG(inode->i_mode) && !S_ISDIR(inode->i_mode))
-			RETURN(-EPERM);
+			GOTO(out, rc = -EPERM);
 	}
 
 	/* This check is required for compatibility with 2.14, in which
@@ -158,11 +161,11 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	 * context is set directly in the create request.
 	 */
 	if (handler->flags == XATTR_SECURITY_T && strcmp(name, "c") == 0)
-		RETURN(-EPERM);
+		GOTO(out, rc = -EPERM);
 
 	fullname = kasprintf(GFP_KERNEL, "%s%s", xattr_prefix(handler), name);
 	if (!fullname)
-		RETURN(-ENOMEM);
+		GOTO(out, rc = -ENOMEM);
 
 	rc = md_setxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid, fullname,
 			 pv, size, flags, ll_i2suppgid(inode), &req);
@@ -172,7 +175,7 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 			LCONSOLE_INFO("Disabling user_xattr feature because it is not supported on the server\n");
 			clear_bit(LL_SBI_USER_XATTR, sbi->ll_flags);
 		}
-		RETURN(rc);
+		GOTO(out, rc);
 	}
 
 	ptlrpc_req_finished(req);
@@ -180,8 +183,10 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	ll_stats_ops_tally(ll_i2sbi(inode), valid == OBD_MD_FLXATTRRM ?
 				LPROC_LL_REMOVEXATTR : LPROC_LL_SETXATTR,
 			   ktime_us_delta(ktime_get(), kstart));
+out:
+	ll_clear_inode_lock_owner(inode);
 
-	RETURN(0);
+	RETURN(rc);
 }
 
 static int get_hsm_state(struct inode *inode, u32 *hus_states)
@@ -348,10 +353,13 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 	ktime_t kstart = ktime_get();
 	int op_type = flags == XATTR_REPLACE ? LPROC_LL_REMOVEXATTR :
 					       LPROC_LL_SETXATTR;
-	int rc;
+	int rc = 0;
 
 	LASSERT(inode);
 	LASSERT(name);
+
+	/* VFS has locked the inode before calling this */
+	ll_set_inode_lock_owner(inode);
 
 	CDEBUG(D_VFSTRACE, "VFS Op:inode=" DFID "(%p), xattr %s\n",
 	       PFID(ll_inode2fid(inode)), inode, name);
@@ -362,11 +370,11 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 				       size);
 		ll_stats_ops_tally(ll_i2sbi(inode), op_type,
 				   ktime_us_delta(ktime_get(), kstart));
-		return rc;
+		goto out;
 	} else if (!strcmp(name, "lma") || !strcmp(name, "link")) {
 		ll_stats_ops_tally(ll_i2sbi(inode), op_type,
 				   ktime_us_delta(ktime_get(), kstart));
-		return 0;
+		goto out;
 	}
 
 	if (strncmp(name, "lov.", 4) == 0 &&
@@ -374,8 +382,12 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 	    le32_to_cpu(LOV_MAGIC_MASK)) == le32_to_cpu(LOV_MAGIC_MAGIC))
 		lustre_swab_lov_user_md((struct lov_user_md *)value, 0);
 
-	return ll_xattr_set_common(handler, mnt_userns, dentry, inode, name,
-				   value, size, flags);
+	rc = ll_xattr_set_common(handler, mnt_userns, dentry, inode, name,
+				 value, size, flags);
+out:
+	ll_clear_inode_lock_owner(inode);
+
+	return rc;
 }
 
 int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,

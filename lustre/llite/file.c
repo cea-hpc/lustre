@@ -131,7 +131,8 @@ static void ll_prepare_close(struct inode *inode, struct md_op_data *op_data,
 	op_data->op_open_handle = och->och_open_handle;
 
 	if (och->och_flags & FMODE_WRITE &&
-	    test_and_clear_bit(LLIF_DATA_MODIFIED, &ll_i2info(inode)->lli_flags))
+	    test_and_clear_bit(LLIF_DATA_MODIFIED,
+			       &ll_i2info(inode)->lli_flags))
 		/* For HSM: if inode data has been modified, pack it so that
 		 * MDT can set data dirty flag in the archive. */
 		op_data->op_bias |= MDS_DATA_MODIFIED;
@@ -2142,11 +2143,11 @@ static ssize_t ll_do_tiny_write(struct kiocb *iocb, struct iov_iter *iter)
 		RETURN(0);
 
 	if (unlikely(lock_inode))
-		inode_lock(inode);
+		ll_inode_lock(inode);
 	result = __generic_file_write_iter(iocb, iter);
 
 	if (unlikely(lock_inode))
-		inode_unlock(inode);
+		ll_inode_unlock(inode);
 
 	/* If the page is not already dirty, ll_tiny_write_begin returns
 	 * -ENODATA.  We continue on to normal write.
@@ -3251,11 +3252,10 @@ static int ll_hsm_import(struct inode *inode, struct file *file,
 			 ATTR_ATIME | ATTR_ATIME_SET;
 
 	inode_lock(inode);
-
+	/* inode lock owner set in ll_setattr_raw()*/
 	rc = ll_setattr_raw(file_dentry(file), attr, 0, true);
 	if (rc == -ENODATA)
 		rc = 0;
-
 	inode_unlock(inode);
 
 out:
@@ -3304,6 +3304,7 @@ static int ll_file_futimes_3(struct file *file, const struct ll_futimes_3 *lfu)
 		RETURN(-EINVAL);
 
 	inode_lock(inode);
+	/* inode lock owner set in ll_setattr_raw()*/
 	rc = ll_setattr_raw(file_dentry(file), &ia, OP_XVALID_CTIME_SET,
 			    false);
 	inode_unlock(inode);
@@ -3685,10 +3686,10 @@ int ll_ioctl_project(struct file *file, unsigned int cmd,
 	/* apply child dentry if name is valid */
 	name_len = strnlen(lu_project.project_name, NAME_MAX);
 	if (name_len > 0 && name_len <= NAME_MAX) {
-		inode_lock(inode);
+		ll_inode_lock(inode);
 		child_dentry = lookup_one_len(lu_project.project_name,
 					      dentry, name_len);
-		inode_unlock(inode);
+		ll_inode_unlock(inode);
 		if (IS_ERR(child_dentry)) {
 			rc = PTR_ERR(child_dentry);
 			goto out;
@@ -5012,7 +5013,7 @@ int ll_migrate(struct inode *parent, struct file *file, struct lmv_user_md *lum,
 	if (IS_ERR(op_data))
 		GOTO(out_iput, rc = PTR_ERR(op_data));
 
-	inode_lock(child_inode);
+	ll_inode_lock(child_inode);
 	op_data->op_fid3 = *ll_inode2fid(child_inode);
 	if (!fid_is_sane(&op_data->op_fid3)) {
 		CERROR("%s: migrate %s, but FID "DFID" is insane\n",
@@ -5093,7 +5094,7 @@ out_close:
 	if (!rc)
 		clear_nlink(child_inode);
 out_unlock:
-	inode_unlock(child_inode);
+	ll_inode_unlock(child_inode);
 	ll_finish_md_op_data(op_data);
 out_iput:
 	iput(child_inode);
