@@ -8046,6 +8046,12 @@ static int osd_shutdown(const struct lu_env *env, struct osd_device *o)
 	RETURN(0);
 }
 
+#ifdef HAVE_FLUSH_DELAYED_FPUT
+# define cfs_flush_delayed_fput() flush_delayed_fput()
+#else
+void (*cfs_flush_delayed_fput)(void);
+#endif /* HAVE_FLUSH_DELAYED_FPUT */
+
 static void osd_umount(const struct lu_env *env, struct osd_device *o)
 {
 	ENTRY;
@@ -8059,6 +8065,9 @@ static void osd_umount(const struct lu_env *env, struct osd_device *o)
 		mntput(o->od_mnt);
 		o->od_mnt = NULL;
 	}
+
+	/* to be sure all delayed fput are finished */
+	cfs_flush_delayed_fput();
 
 	EXIT;
 }
@@ -8191,6 +8200,7 @@ static int osd_mount(const struct lu_env *env,
 		GOTO(out, rc = -ENODEV);
 	}
 
+	s_flags |= SB_KERNMOUNT;
 	o->od_mnt = vfs_kern_mount(type, s_flags, dev, options);
 	module_put(type->owner);
 
@@ -8794,6 +8804,12 @@ static int __init osd_init(void)
 			rc = 0;
 		}
 	}
+
+#ifndef HAVE_FLUSH_DELAYED_FPUT
+	if (unlikely(cfs_flush_delayed_fput == NULL))
+		cfs_flush_delayed_fput =
+			cfs_kallsyms_lookup_name("flush_delayed_fput");
+#endif
 
 	return rc;
 }
