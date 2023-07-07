@@ -268,6 +268,9 @@ static inline void iov_iter_truncate(struct iov_iter *i, u64 count)
 #if !defined(SB_NODIRATIME) && defined(MS_NODIRATIME)
 # define SB_NODIRATIME MS_NODIRATIME
 #endif
+#if !defined(SB_KERNMOUNT) && defined(MS_KERNMOUNT)
+# define SB_KERNMOUNT MS_KERNMOUNT
+#endif
 
 #ifndef HAVE_IOV_ITER_IOVEC
 static inline struct iovec iov_iter_iovec(const struct iov_iter *iter)
