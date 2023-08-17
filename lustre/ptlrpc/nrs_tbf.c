@@ -52,6 +52,7 @@
  */
 
 #define NRS_POL_NAME_TBF	"tbf"
+#define TBF_DEPTH_RATE		U64_MAX
 
 static int tbf_jobid_cache_size = 8192;
 module_param(tbf_jobid_cache_size, int, 0644);
@@ -63,7 +64,12 @@ MODULE_PARM_DESC(tbf_rate, "Default rate limit in RPCs/s");
 
 static int tbf_depth = 3;
 module_param(tbf_depth, int, 0644);
-MODULE_PARM_DESC(tbf_depth, "How many tokens that a client can save up");
+MODULE_PARM_DESC(tbf_depth, "How many tokens that a client can save up for the maximum rate of a rule");
+
+static int tbf_mindepth = -1;
+module_param(tbf_mindepth, int, 0644);
+MODULE_PARM_DESC(tbf_mindepth, "How many tokens that a client can save up for minimum rate of a rule (-1: adapt depth to the rate)");
+
 
 static enum hrtimer_restart nrs_tbf_timer_cb(struct hrtimer *timer)
 {
@@ -122,21 +128,69 @@ nrs_tbf_cli_rule_put(struct nrs_tbf_client *cli)
 	cli->tc_rule = NULL;
 }
 
+static inline __u64 nrs_tbf_cli_depth(enum nrs_rule_flags fl,
+				      __u64 rate, __u64 depth)
+{
+	/**
+	 * For realtime rule limits the depth to avoid over scheduled
+	 * requests from a job/node/user that was silent for a long time.
+	 * Store enough token to absorb 8s of inactivity.
+	 */
+	if (fl & NTRS_REALTIME)
+		return 8 * rate;
+
+	/* Default mode, store enough token to absorb 2s of inactivity. */
+	if (depth == TBF_DEPTH_RATE)
+		return 2 * rate;
+
+	/**
+	 * For normal rule, the saved tokens (ti_ntoken) will be consumed the
+	 * best effort way (server not loaded).
+	 * For realtime rule, the saved tokens will be consumed by prioritizing
+	 * the class: it tries to match the defined rate even on server load.
+	 */
+
+	return depth;
+}
+
 static void
 nrs_tbf_cli_reset_value(struct nrs_tbf_head *head,
 			struct nrs_tbf_client *cli)
 
 {
 	struct nrs_tbf_rule *rule = cli->tc_rule;
+	__u64 now = ktime_to_ns(ktime_get());
 
-	cli->tc_rpc_rate = rule->tr_rpc_rate;
-	cli->tc_nsecs = rule->tr_nsecs_per_rpc;
-	cli->tc_nsecs_resid = 0;
-	cli->tc_depth = rule->tr_depth;
-	cli->tc_ntoken = rule->tr_depth;
-	cli->tc_check_time = ktime_to_ns(ktime_get());
+	cli->tc_max.ti_check_time = now;
+	cli->tc_max.ti_rate = rule->tr_rpc_rate;
+	cli->tc_max.ti_ntoken = 0;
+	cli->tc_max.ti_nsecs_resid = 0;
+	cli->tc_max.ti_depth = nrs_tbf_cli_depth(rule->tr_flags,
+						 rule->tr_rpc_rate,
+						 rule->tr_depth);
+
+	cli->tc_max.ti_nsecs = NSEC_PER_SEC / rule->tr_rpc_rate;
+	cli->tc_max.ti_deadline = now;
+
+	cli->tc_min.ti_check_time = now;
+	cli->tc_min.ti_rate = rule->tr_rpc_minrate;
+	cli->tc_min.ti_ntoken = 0;
+	cli->tc_min.ti_nsecs_resid = 0;
+	cli->tc_min.ti_depth = nrs_tbf_cli_depth(rule->tr_flags,
+						 rule->tr_rpc_minrate,
+						 rule->tr_mindepth);
+
+	if (rule->tr_rpc_minrate) {
+		cli->tc_min.ti_nsecs = NSEC_PER_SEC / rule->tr_rpc_minrate;
+		cli->tc_min.ti_deadline = now;
+	} else {
+		cli->tc_min.ti_nsecs = U64_MAX;
+		cli->tc_min.ti_deadline = U64_MAX;
+	}
+
 	cli->tc_rule_sequence = atomic_read(&head->th_rule_sequence);
 	cli->tc_rule_generation = rule->tr_generation;
+
 
 	if (cli->tc_in_heap)
 		binheap_relocate(head->th_binheap,
@@ -162,6 +216,22 @@ nrs_tbf_cli_reset(struct nrs_tbf_head *head,
 	spin_unlock(&rule->tr_rule_lock);
 	spin_unlock(&cli->tc_rule_lock);
 	nrs_tbf_cli_reset_value(head, cli);
+}
+
+static inline void
+nrs_tbf_common_rule_dump(struct nrs_tbf_rule *r, const char *str,
+			 struct seq_file *m)
+{
+	seq_printf(m, "%s {%s} ", r->tr_name, str);
+
+	if (!r->tr_rpc_minrate && r->tr_rpc_rate)
+		seq_printf(m, "%llu,", r->tr_rpc_rate);
+	else
+		seq_printf(m, "%llu-%llu,", r->tr_rpc_minrate, r->tr_rpc_rate);
+
+	seq_printf(m, "%s ref %d\n",
+		   (r->tr_flags & NTRS_REALTIME) ? " realtime," : "",
+		   atomic_read(&r->tr_ref) - 1);
 }
 
 static int
@@ -282,11 +352,16 @@ nrs_tbf_rule_start(struct ptlrpc_nrs_policy *policy,
 		   struct nrs_tbf_head *head,
 		   struct nrs_tbf_cmd *start)
 {
-	struct nrs_tbf_rule	*rule;
-	struct nrs_tbf_rule	*tmp_rule;
-	struct nrs_tbf_rule	*next_rule;
-	char			*next_name = start->u.tc_start.ts_next_name;
-	int			 rc;
+	struct nrs_tbf_rule *rule;
+	struct nrs_tbf_rule *tmp_rule;
+	struct nrs_tbf_rule *next_rule;
+	char *next_name = start->u.tc_start.ts_next_name;
+	__u64 rate = start->u.tc_start.ts_rpc_rate;
+	__u64 minrate = start->u.tc_start.ts_rpc_minrate;
+	int rc;
+
+	if (minrate >= rate)
+		return -EINVAL;
 
 	rule = nrs_tbf_rule_find(head, start->tc_name);
 	if (rule) {
@@ -299,10 +374,13 @@ nrs_tbf_rule_start(struct ptlrpc_nrs_policy *policy,
 		return -ENOMEM;
 
 	strlcpy(rule->tr_name, start->tc_name, sizeof(rule->tr_name));
-	rule->tr_rpc_rate = start->u.tc_start.ts_rpc_rate;
 	rule->tr_flags = start->u.tc_start.ts_rule_flags;
-	rule->tr_nsecs_per_rpc = NSEC_PER_SEC / rule->tr_rpc_rate;
-	rule->tr_depth = tbf_depth;
+	rule->tr_depth = tbf_depth < 0 ? TBF_DEPTH_RATE : tbf_depth;
+	rule->tr_mindepth = tbf_mindepth < 0 ? TBF_DEPTH_RATE : tbf_mindepth;
+
+	rule->tr_rpc_rate = rate;
+	rule->tr_rpc_minrate = minrate;
+
 	atomic_set(&rule->tr_ref, 1);
 	INIT_LIST_HEAD(&rule->tr_cli_list);
 	INIT_LIST_HEAD(&rule->tr_nids);
@@ -348,8 +426,9 @@ nrs_tbf_rule_start(struct ptlrpc_nrs_policy *policy,
 		head->th_rule = rule;
 	}
 
-	CDEBUG(D_RPCTRACE, "TBF starts rule@%p rate %llu gen %llu\n",
-	       rule, rule->tr_rpc_rate, rule->tr_generation);
+	CDEBUG(D_RPCTRACE, "TBF starts rule@%p min rate %llu max rate %llu gen %llu\n",
+	       rule, rule->tr_rpc_minrate, rule->tr_rpc_rate,
+	       rule->tr_generation);
 
 	return 0;
 }
@@ -405,7 +484,7 @@ static int
 nrs_tbf_rule_change_rate(struct ptlrpc_nrs_policy *policy,
 			 struct nrs_tbf_head *head,
 			 char *name,
-			 __u64 rate)
+			 __u64 minrate, __u64 rate)
 {
 	struct nrs_tbf_rule *rule;
 
@@ -415,8 +494,16 @@ nrs_tbf_rule_change_rate(struct ptlrpc_nrs_policy *policy,
 	if (rule == NULL)
 		return -ENOENT;
 
+	rate = rate ? rate : rule->tr_rpc_rate;
+	minrate = minrate ? minrate : rule->tr_rpc_minrate;
+	if (minrate >= rate) {
+		nrs_tbf_rule_put(rule);
+		return -EINVAL;
+	}
+
+	rule->tr_rpc_minrate = minrate;
 	rule->tr_rpc_rate = rate;
-	rule->tr_nsecs_per_rpc = NSEC_PER_SEC / rule->tr_rpc_rate;
+
 	rule->tr_generation++;
 	nrs_tbf_rule_put(rule);
 
@@ -429,12 +516,13 @@ nrs_tbf_rule_change(struct ptlrpc_nrs_policy *policy,
 		    struct nrs_tbf_cmd *change)
 {
 	__u64	 rate = change->u.tc_change.tc_rpc_rate;
+	__u64	 minrate = change->u.tc_change.tc_rpc_minrate;
 	char	*next_name = change->u.tc_change.tc_next_name;
 	int	 rc;
 
-	if (rate != 0) {
+	if (rate || minrate) {
 		rc = nrs_tbf_rule_change_rate(policy, head, change->tc_name,
-					      rate);
+					      minrate, rate);
 		if (rc)
 			return rc;
 	}
@@ -517,18 +605,37 @@ tbf_cli_compare(struct binheap_node *e1, struct binheap_node *e2)
 {
 	struct nrs_tbf_client *cli1;
 	struct nrs_tbf_client *cli2;
+	struct nrs_tbf_token_info *ti1;
+	struct nrs_tbf_token_info *ti2;
 
 	cli1 = container_of(e1, struct nrs_tbf_client, tc_node);
 	cli2 = container_of(e2, struct nrs_tbf_client, tc_node);
 
-	if (cli1->tc_deadline < cli2->tc_deadline)
+	/* prioritize class with minrate only when late */
+	ti1 = &cli1->tc_min;
+	ti2 = &cli2->tc_min;
+	if (ti1->ti_ntoken || ti2->ti_ntoken) {
+		if (ti1->ti_deadline < ti2->ti_deadline)
+			return 1;
+		else if (ti1->ti_deadline > ti2->ti_deadline)
+			return 0;
+
+		if (ti1->ti_check_time < ti2->ti_check_time)
+			return 1;
+		else if (ti1->ti_check_time > ti2->ti_check_time)
+			return 0;
+	}
+
+	ti1 = &cli1->tc_max;
+	ti2 = &cli2->tc_max;
+	if (ti1->ti_deadline < ti2->ti_deadline)
 		return 1;
-	else if (cli1->tc_deadline > cli2->tc_deadline)
+	else if (ti1->ti_deadline > ti2->ti_deadline)
 		return 0;
 
-	if (cli1->tc_check_time < cli2->tc_check_time)
+	if (ti1->ti_check_time < ti2->ti_check_time)
 		return 1;
-	else if (cli1->tc_check_time > cli2->tc_check_time)
+	else if (ti1->ti_check_time > ti2->ti_check_time)
 		return 0;
 
 	/* Maybe need more comparasion, e.g. request number in the rules */
@@ -1000,9 +1107,7 @@ static int nrs_tbf_jobid_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_jobid_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
-		   rule->tr_jobids_str, rule->tr_rpc_rate,
-		   atomic_read(&rule->tr_ref) - 1);
+	nrs_tbf_common_rule_dump(rule, rule->tr_jobids_str, m);
 	return 0;
 }
 
@@ -1205,9 +1310,7 @@ static int nrs_tbf_nid_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_nid_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
-		   rule->tr_nids_str, rule->tr_rpc_rate,
-		   atomic_read(&rule->tr_ref) - 1);
+	nrs_tbf_common_rule_dump(rule, rule->tr_nids_str, m);
 	return 0;
 }
 
@@ -2068,9 +2171,7 @@ nrs_tbf_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_generic_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s %s %llu, ref %d\n", rule->tr_name,
-		   rule->tr_conds_str, rule->tr_rpc_rate,
-		   atomic_read(&rule->tr_ref) - 1);
+	nrs_tbf_common_rule_dump(rule, rule->tr_conds_str, m);
 	return 0;
 }
 
@@ -2358,9 +2459,7 @@ static int nrs_tbf_opcode_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_opcode_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
-		   rule->tr_opcodes_str, rule->tr_rpc_rate,
-		   atomic_read(&rule->tr_ref) - 1);
+	nrs_tbf_common_rule_dump(rule, rule->tr_opcodes_str, m);
 	return 0;
 }
 
@@ -2673,9 +2772,7 @@ nrs_tbf_id_rule_init(struct ptlrpc_nrs_policy *policy,
 static int
 nrs_tbf_id_rule_dump(struct nrs_tbf_rule *rule, struct seq_file *m)
 {
-	seq_printf(m, "%s {%s} %llu, ref %d\n", rule->tr_name,
-		   rule->tr_ids_str, rule->tr_rpc_rate,
-		   atomic_read(&rule->tr_ref) - 1);
+	nrs_tbf_common_rule_dump(rule, rule->tr_ids_str, m);
 	return 0;
 }
 
@@ -2964,9 +3061,9 @@ static int nrs_tbf_res_get(struct ptlrpc_nrs_policy *policy,
 			struct nrs_tbf_rule *rule;
 
 			CDEBUG(D_RPCTRACE,
-			       "TBF class@%p rate %llu sequence %d, "
-			       "rule flags %d, head sequence %d\n",
-			       cli, cli->tc_rpc_rate,
+			       "TBF class@%p minrate %llu rate %llu sequence %d, rule flags %d, head sequence %d\n",
+			       cli, cli->tc_min.ti_rate,
+			       cli->tc_max.ti_rate,
 			       cli->tc_rule_sequence,
 			       cli->tc_rule->tr_flags,
 			       atomic_read(&head->th_rule_sequence));
@@ -3029,6 +3126,61 @@ static void nrs_tbf_res_put(struct ptlrpc_nrs_policy *policy,
 	head->th_ops->o_cli_put(head, cli);
 }
 
+static inline __u64 nrs_tbf_ntoken(struct nrs_tbf_token_info *ti,
+				   __u64 now,
+				   bool force,
+				   bool realtime)
+{
+	__u64 ntoken;
+	__u64 passed;
+	__u64 delay;
+	__u64 resid = 0;
+
+	if (!ti->ti_rate)
+		return 0;
+
+	LASSERT(now >= ti->ti_check_time);
+	passed = now - ti->ti_check_time;
+
+	if (unlikely(force)) {
+		ti->ti_ntoken = 0;
+		ti->ti_nsecs_resid = 0;
+		return 1;
+	}
+
+	resid = do_div(passed, ti->ti_nsecs);
+	ntoken = passed + ti->ti_ntoken;
+
+	LASSERT(ti->ti_nsecs_resid < ti->ti_nsecs);
+
+	resid += ti->ti_nsecs_resid;
+	if (resid >= ti->ti_nsecs) {
+		ntoken++;
+		resid -= ti->ti_nsecs;
+	}
+
+	if (!ntoken)
+		return 0;
+
+	ntoken = min(ntoken, ti->ti_depth);
+
+	/* update the token history if a token is consumed */
+	ti->ti_check_time = now;
+	ti->ti_ntoken = ntoken - 1;
+	ti->ti_nsecs_resid = resid;
+
+	delay = ti->ti_nsecs - resid;
+	ti->ti_deadline = now;
+
+	/* on server load enforce the RPC rate for realtime classes  */
+	if (realtime && ti->ti_ntoken)
+		ti->ti_deadline -= (ti->ti_ntoken - 1) * ti->ti_nsecs;
+	else
+		ti->ti_deadline += delay;
+
+	return ntoken;
+}
+
 /**
  * Called when getting a request from the TBF policy for handling, or just
  * peeking; removes the request from the policy when it is to be handled.
@@ -3053,6 +3205,11 @@ struct ptlrpc_nrs_request *nrs_tbf_req_get(struct ptlrpc_nrs_policy *policy,
 	struct ptlrpc_nrs_request *nrq = NULL;
 	struct nrs_tbf_client     *cli;
 	struct binheap_node	  *node;
+	struct nrs_tbf_rule *rule;
+	__u64 now;
+	__u64 ntoken;
+	__u64 ntoken_min;
+	bool realtime;
 
 	assert_spin_locked(&policy->pol_nrs->nrs_svcpt->scp_req_lock);
 
@@ -3065,90 +3222,62 @@ struct ptlrpc_nrs_request *nrs_tbf_req_get(struct ptlrpc_nrs_policy *policy,
 
 	cli = container_of(node, struct nrs_tbf_client, tc_node);
 	LASSERT(cli->tc_in_heap);
-	if (unlikely(peek)) {
-		nrq = list_entry(cli->tc_list.next,
-				     struct ptlrpc_nrs_request,
-				     nr_u.tbf.tr_list);
-	} else {
-		struct nrs_tbf_rule *rule = cli->tc_rule;
-		__u64 now = ktime_to_ns(ktime_get());
-		__u64 passed;
-		__u64 ntoken;
-		__u64 deadline;
-		__u64 old_resid = 0;
+	if (unlikely(peek))
+		return list_first_entry(&cli->tc_list, typeof(*nrq),
+					nr_u.tbf.tr_list);
 
-		deadline = cli->tc_check_time +
-			  cli->tc_nsecs;
-		LASSERT(now >= cli->tc_check_time);
-		passed = now - cli->tc_check_time;
-		ntoken = passed * cli->tc_rpc_rate;
-		do_div(ntoken, NSEC_PER_SEC);
+	rule = cli->tc_rule;
+	now = ktime_to_ns(ktime_get());
 
-		ntoken += cli->tc_ntoken;
-		if (rule->tr_flags & NTRS_REALTIME) {
-			LASSERT(cli->tc_nsecs_resid < cli->tc_nsecs);
-			old_resid = cli->tc_nsecs_resid;
-			cli->tc_nsecs_resid += passed % cli->tc_nsecs;
-			if (cli->tc_nsecs_resid > cli->tc_nsecs) {
-				ntoken++;
-				cli->tc_nsecs_resid -= cli->tc_nsecs;
-			}
-		} else if (ntoken > cli->tc_depth)
-			ntoken = cli->tc_depth;
+	realtime = (rule->tr_flags & NTRS_REALTIME);
+	ntoken_min = nrs_tbf_ntoken(&cli->tc_min, now, force, realtime);
 
-		/* give an extra token with force mode */
-		if (unlikely(force) && ntoken == 0)
-			ntoken = 1;
+	/* realtime for max rate only if not applied on min */
+	realtime = realtime && !cli->tc_min.ti_rate;
+	ntoken = nrs_tbf_ntoken(&cli->tc_max, now, force, realtime);
 
-		if (ntoken > 0) {
-			struct ptlrpc_request *req;
-			nrq = list_entry(cli->tc_list.next,
-					     struct ptlrpc_nrs_request,
-					     nr_u.tbf.tr_list);
-			req = container_of(nrq,
-					   struct ptlrpc_request,
-					   rq_nrq);
-			ntoken--;
-			cli->tc_ntoken = ntoken;
-			cli->tc_check_time = now;
-			list_del_init(&nrq->nr_u.tbf.tr_list);
-			if (list_empty(&cli->tc_list)) {
-				binheap_remove(head->th_binheap,
-					       &cli->tc_node);
-				cli->tc_in_heap = false;
-			} else {
-				if (!(rule->tr_flags & NTRS_REALTIME))
-					cli->tc_deadline = now + cli->tc_nsecs;
-				binheap_relocate(head->th_binheap,
-						 &cli->tc_node);
-			}
-			CDEBUG(D_RPCTRACE,
-			       "TBF dequeues: class@%p rate %llu gen %llu token %llu, rule@%p rate %llu gen %llu\n",
-			       cli, cli->tc_rpc_rate,
-			       cli->tc_rule_generation, cli->tc_ntoken,
-			       cli->tc_rule, cli->tc_rule->tr_rpc_rate,
-			       cli->tc_rule->tr_generation);
-		} else {
-			ktime_t time;
+	if (!ntoken && !ntoken_min) {
+		ktime_t time = ktime_set(0, 0);
 
-			if (rule->tr_flags & NTRS_REALTIME) {
-				cli->tc_deadline = deadline;
-				cli->tc_nsecs_resid = old_resid;
-				binheap_relocate(head->th_binheap,
-						 &cli->tc_node);
-				if (node != binheap_root(head->th_binheap))
-					return nrs_tbf_req_get(policy,
-							       peek, force);
-			}
-			policy->pol_nrs->nrs_throttling = 1;
-			head->th_deadline = deadline;
-			time = ktime_set(0, 0);
-			time = ktime_add_ns(time, deadline);
-			hrtimer_start(&head->th_timer, time, HRTIMER_MODE_ABS);
-		}
+		policy->pol_nrs->nrs_throttling = 1;
+		head->th_deadline = cli->tc_max.ti_deadline;
+		time = ktime_add_ns(time, head->th_deadline);
+		hrtimer_start(&head->th_timer, time, HRTIMER_MODE_ABS);
+
+		return NULL;
 	}
 
+	nrq = list_first_entry(&cli->tc_list,
+			       struct ptlrpc_nrs_request,
+			       nr_u.tbf.tr_list);
+
+	list_del_init(&nrq->nr_u.tbf.tr_list);
+	if (list_empty(&cli->tc_list)) {
+		binheap_remove(head->th_binheap, &cli->tc_node);
+		cli->tc_in_heap = false;
+	} else {
+		binheap_relocate(head->th_binheap, &cli->tc_node);
+	}
+
+	CDEBUG(D_RPCTRACE,
+	       "TBF dequeues: class@%p minrate %llu rate %llu gen %llu token_min %llu token %llu rule@%p rate %llu gen %llu\n",
+	       cli, cli->tc_min.ti_rate,
+	       cli->tc_max.ti_rate,
+	       cli->tc_rule_generation,
+	       cli->tc_min.ti_ntoken, cli->tc_max.ti_ntoken,
+	       cli->tc_rule, cli->tc_rule->tr_rpc_rate,
+	       cli->tc_rule->tr_generation);
+
 	return nrq;
+}
+
+static inline __u64 nrs_tbf_timer_deadline(struct nrs_tbf_client *cli)
+{
+
+	if (!cli->tc_min.ti_ntoken)
+		return cli->tc_max.ti_deadline;
+
+	return min(cli->tc_min.ti_deadline, cli->tc_max.ti_deadline);
 }
 
 /**
@@ -3174,27 +3303,26 @@ static int nrs_tbf_req_add(struct ptlrpc_nrs_policy *policy,
 	head = container_of(nrs_request_resource(nrq)->res_parent,
 			    struct nrs_tbf_head, th_res);
 	if (list_empty(&cli->tc_list)) {
+		__u64 deadline = nrs_tbf_timer_deadline(cli);
+
 		LASSERT(!cli->tc_in_heap);
-		cli->tc_deadline = cli->tc_check_time + cli->tc_nsecs;
+
 		rc = binheap_insert(head->th_binheap, &cli->tc_node);
-		if (rc == 0) {
-			cli->tc_in_heap = true;
-			nrq->nr_u.tbf.tr_sequence = head->th_sequence++;
-			list_add_tail(&nrq->nr_u.tbf.tr_list,
-					  &cli->tc_list);
-			if (policy->pol_nrs->nrs_throttling) {
-				__u64 deadline = cli->tc_deadline;
-				if ((head->th_deadline > deadline) &&
-				    (hrtimer_try_to_cancel(&head->th_timer)
-				     >= 0)) {
-					ktime_t time;
-					head->th_deadline = deadline;
-					time = ktime_set(0, 0);
-					time = ktime_add_ns(time, deadline);
-					hrtimer_start(&head->th_timer, time,
-						      HRTIMER_MODE_ABS);
-				}
-			}
+		if (rc)
+			return rc;
+
+		cli->tc_in_heap = true;
+		nrq->nr_u.tbf.tr_sequence = head->th_sequence++;
+		list_add_tail(&nrq->nr_u.tbf.tr_list, &cli->tc_list);
+
+		if (policy->pol_nrs->nrs_throttling &&
+		    head->th_deadline > deadline &&
+		    hrtimer_try_to_cancel(&head->th_timer) >= 0) {
+			ktime_t time = ktime_set(0, 0);
+
+			head->th_deadline = deadline;
+			time = ktime_add_ns(time, deadline);
+			hrtimer_start(&head->th_timer, time, HRTIMER_MODE_ABS);
 		}
 	} else {
 		LASSERT(cli->tc_in_heap);
@@ -3205,9 +3333,11 @@ static int nrs_tbf_req_add(struct ptlrpc_nrs_policy *policy,
 
 	if (rc == 0)
 		CDEBUG(D_RPCTRACE,
-		       "TBF enqueues: class@%p rate %llu gen %llu token %llu, rule@%p rate %llu gen %llu\n",
-		       cli, cli->tc_rpc_rate,
-		       cli->tc_rule_generation, cli->tc_ntoken,
+		       "TBF enqueues: class@%p minrate %llu rate %llu gen %llu token_min %llu token %llu rule@%p rate %llu gen %llu\n",
+		       cli, cli->tc_min.ti_rate,
+		       cli->tc_max.ti_rate,
+		       cli->tc_rule_generation,
+		       cli->tc_min.ti_ntoken, cli->tc_max.ti_ntoken,
 		       cli->tc_rule, cli->tc_rule->tr_rpc_rate,
 		       cli->tc_rule->tr_generation);
 
@@ -3435,6 +3565,20 @@ nrs_tbf_parse_value_pair(struct nrs_tbf_cmd *cmd, char *buffer)
 			cmd->u.tc_change.tc_rpc_rate = rate;
 		else
 			return -EINVAL;
+	} else if (strcmp(key, "minrate") == 0) {
+		rc = kstrtoull(val, 10, &rate);
+		if (rc)
+			return rc;
+
+		if (rate <= 0 || rate >= LPROCFS_NRS_RATE_MAX)
+			return -EINVAL;
+
+		if (cmd->tc_cmd == NRS_CTL_TBF_START_RULE)
+			cmd->u.tc_start.ts_rpc_minrate = rate;
+		else if (cmd->tc_cmd == NRS_CTL_TBF_CHANGE_RULE)
+			cmd->u.tc_change.tc_rpc_minrate = rate;
+		else
+			return -EINVAL;
 	}  else if (strcmp(key, "rank") == 0) {
 		rc = check_rule_name(val);
 		if (rc)
@@ -3483,6 +3627,7 @@ nrs_tbf_parse_value_pairs(struct nrs_tbf_cmd *cmd, char *buffer)
 		break;
 	case NRS_CTL_TBF_CHANGE_RULE:
 		if (cmd->u.tc_change.tc_rpc_rate == 0 &&
+		     cmd->u.tc_change.tc_rpc_minrate == 0 &&
 		    cmd->u.tc_change.tc_next_name == NULL)
 			return -EINVAL;
 		break;

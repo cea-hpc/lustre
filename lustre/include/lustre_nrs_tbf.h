@@ -76,6 +76,26 @@ struct nrs_tbf_id {
 	struct list_head	nti_linkage;
 };
 
+struct nrs_tbf_token_info {
+	/** Limit of RPC maximum rate. */
+	__u64 ti_rate;
+	/** Token bucket depth. */
+	__u64 ti_depth;
+	/** Time to wait for next token. */
+	__u64 ti_nsecs;
+	/** Time of last consumed token */
+	__u64 ti_check_time;
+	/** Next token deadline */
+	__u64 ti_deadline;
+	/** RPC token number. */
+	__u64 ti_ntoken;
+	/**
+	 * Time residue: the remainder of elapsed time
+	 * divided by nsecs when dequeue a request.
+	 */
+	__u64 ti_nsecs_resid;
+};
+
 struct nrs_tbf_client {
 	/** Resource object for policy instance. */
 	struct ptlrpc_nrs_resource	 tc_res;
@@ -101,23 +121,10 @@ struct nrs_tbf_client {
 	struct nrs_tbf_rule		*tc_rule;
 	/** Generation of the rule matched. */
 	__u64				 tc_rule_generation;
-	/** Limit of RPC rate. */
-	__u64				 tc_rpc_rate;
-	/** Time to wait for next token. */
-	__u64				 tc_nsecs;
-	/** RPC token number. */
-	__u64				 tc_ntoken;
-	/** Token bucket depth. */
-	__u64				 tc_depth;
-	/** Time check-point. */
-	__u64				 tc_check_time;
-	/** Deadline of a class */
-	__u64				 tc_deadline;
-	/**
-	 * Time residue: the remainder of elapsed time
-	 * divided by nsecs when dequeue a request.
-	 */
-	__u64				 tc_nsecs_resid;
+	/** Token info for minimum rate */
+	struct nrs_tbf_token_info	 tc_min;
+	/** Token info for maximum rate */
+	struct nrs_tbf_token_info	 tc_max;
 	/** List of queued requests. */
 	struct list_head		 tc_list;
 	/** Node in binary heap. */
@@ -168,12 +175,14 @@ struct nrs_tbf_rule {
 	struct list_head		tr_conds;
 	/** Generic condition string of the rule. */
 	char				*tr_conds_str;
-	/** RPC/s limit. */
+	/** max RPC/s limit. */
 	__u64				 tr_rpc_rate;
-	/** Time to wait for next token. */
-	u64				 tr_nsecs_per_rpc;
-	/** Token bucket depth. */
+	/** min RPC/s limit. */
+	__u64				 tr_rpc_minrate;
+	/** Token bucket depth for maximum rate*/
 	__u64				 tr_depth;
+	/** Token bucket depth for minimum rate*/
+	__u64				 tr_mindepth;
 	/** Lock to protect the list of clients. */
 	spinlock_t			 tr_rule_lock;
 	/** List of client. */
@@ -300,6 +309,7 @@ struct nrs_tbf_cmd {
 	union {
 		struct nrs_tbf_cmd_start {
 			__u64			 ts_rpc_rate;
+			__u64			 ts_rpc_minrate;
 			struct list_head	 ts_nids;
 			char			*ts_nids_str;
 			struct list_head	 ts_jobids;
@@ -315,6 +325,7 @@ struct nrs_tbf_cmd {
 		} tc_start;
 		struct nrs_tbf_cmd_change {
 			__u64			 tc_rpc_rate;
+			__u64			 tc_rpc_minrate;
 			char			*tc_next_name;
 		} tc_change;
 	} u;

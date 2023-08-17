@@ -4762,6 +4762,170 @@ test_77r() { #LU-14976
 }
 run_test 77r "Change type of tbf policy at run time"
 
+__test_77s_th() {
+	local pid
+	local file=$1
+	local runas=$2
+	local running=true
+
+	while $running; do
+		$runas dd if=$file bs=4K iflag=direct count=100 &> /dev/null &
+		pid=$!
+		# not need to use stack_trap, this run in a separate process
+		trap "kill $pid; running=false;" TERM INT
+		wait $pid || return $?
+	done
+}
+
+__test_77s_get_rate() {
+	local awkcmd
+	local -a val1 val2
+	local id=$1
+
+	awkcmd="/dd.$id$/"' {job=1} '
+	awkcmd+='/snapshot_time:/ {if (job) {print $2;}} '
+	awkcmd+='/read:/ {if (job) {print $4; exit 0;}} '
+	awkcmd+='END {if (!job) exit 1;}'
+
+	val1=( $(do_facet ost1 $LCTL get_param obdfilter.*OST0000.job_stats |
+		tr -d ',' | awk "$awkcmd") ) ||
+		error "Fail to get jobstat"
+
+	sleep 30
+
+	val2=( $(do_facet ost1 $LCTL get_param obdfilter.*OST0000.job_stats |
+		tr -d ',' | awk "$awkcmd") ) ||
+		error "Fail to get jobstat"
+
+ 	echo "(${val2[1]} - ${val1[1]}) / (${val2[0]} - ${val1[0]})" >&2
+	bc <<< "(${val2[1]} - ${val1[1]}) / (${val2[0]} - ${val1[0]})"
+}
+
+test_77s() { #LU-17044
+	local saved_jobid_var
+	local ostsvc="ost.OSS.ost_io"
+	local dirth=$DIR1/$tdir-th
+	local dirth2=$DIR2/$tdir-th
+
+	(( $OST1_VERSION >= $(version_code 2.15.3) )) ||
+		skip "need OSS >= 2.15.3"
+
+	[[ "$(facets_hosts ost1)" != "$HOSTNAME" ]] ||
+		skip "need client and OSTs on separate nodes"
+
+	[[ "$(facets_hosts ost1)" != "$(facets_hosts mdt1)" ]] ||
+		skip "need OSTs and MDTs on separate nodes"
+
+	# Setup jobid
+	saved_jobid_var=$($LCTL get_param -n jobid_var) ||
+		error "Fail to get jobid_var"
+
+	if [[ "$saved_jobid_var" != procname_uid ]]; then
+		$LCTL set_param jobid_var=procname_uid
+		stack_trap "$LCTL set_param jobid_var=$saved_jobid_var" EXIT
+	fi
+
+	# Simulate congestion
+	local ncpt=$(check_cpt_number ost1)
+	local thmin=$(do_facet ost1 $LCTL get_param -n $ostsvc.threads_min)
+	local thmax=$(do_facet ost1 $LCTL get_param -n $ostsvc.threads_max)
+	local thstart=$(do_facet ost1 $LCTL get_param -n $ostsvc.threads_started)
+
+	stack_trap "do_facet ost1 $LCTL set_param $ostsvc.threads_max=$thmax" EXIT
+	(( thmax = thstart > thmin * 3 ? thstart : thmin * 3 ))
+	do_facet ost1 $LCTL set_param -n $ostsvc.threads_max=$thmax ||
+		error "Fail to set threads_max to $thmax"
+
+	local old_inflight=$($LCTL get_param osc.*OST0000*.max_rpcs_in_flight | tr '\n' ' ')
+	stack_trap "$LCTL set_param $old_inflight" EXIT
+
+	(( thmax /= ncpt ))
+	local rpc_inflight=$(( thmax * 2 ))
+	$LCTL set_param osc.*OST0000*.max_rpcs_in_flight=$rpc_inflight ||
+		error "Fail to set max_rpcs_in_flight to $rpc_inflight"
+
+	do_facet ost1 $LCTL set_param $ostsvc.nrs_policies="tbf\ uid"
+	stack_trap "do_facet ost1 $LCTL set_param $ostsvc.nrs_policies=fifo" EXIT
+
+	local pids
+	test_mkdir $dirth || error "Fail to create $dirth"
+	$LFS setstripe -i 0 -c 1 $dirth || error "setstripe failed on $dirth"
+
+	echo "Create $rpc_inflight files"
+	for (( i=0; i <= rpc_inflight; i++ )); do
+		dd if=/dev/urandom of=$dirth/$tfile-$i bs=4K count=100 conv=fsync &> /dev/null &
+		pids+="$! "
+	done
+
+	for i in $pids; do
+		wait $pid || error "Write dd ($i) exit with error: $?"
+	done
+	pids=""
+
+	# target a maximum of 100 RPC/s per CPT for ost_io service
+	# OBD_FAIL_PTLRPC_PAUSE_REQ 0x50a
+	do_facet ost1 $LCTL set_param fail_loc=0x50a fail_val=$(( thmax * 10 ))
+
+	# mesure the maximum rate
+	local max_rate runas_rate tbf_minrate
+
+	echo "Starting the congestion threads"
+	for (( i=0; i <= rpc_inflight; i++ )); do
+		__test_77s_th $dirth/$tfile-$i & pids+="$! "
+	done
+
+	stack_trap "kill $pids" EXIT
+	stack_trap "do_facet ost1 $LCTL set_param fail_loc=0 fail_val=0"
+	pids=""
+
+	sleep 5
+	max_rate=$(__test_77s_get_rate 0)
+	echo "Maximum recorded rate is $max_rate"
+
+	echo "Check tbf minimum rate for uid $RUNAS_ID"
+	(( tbf_minrate = 3 * max_rate / 4 ))
+	do_facet ost1 $LCTL set_param \
+		$ostsvc.nrs_tbf_rule="start\ dd_runas\ uid={$RUNAS_ID}\ minrate=$tbf_minrate" ||
+		error "Fail to start the realtime dd_runas"
+
+	for (( i=0; i <= thmax; i++ )); do
+		__test_77s_th $dirth2/$tfile-$i "runas -u $RUNAS_ID" & pids+="$! "
+	done
+
+	sleep 5
+	runas_rate=$(__test_77s_get_rate $RUNAS_ID)
+	kill $pids;
+	pids=""
+
+	echo "Runas recorded rate is $runas_rate (target: $tbf_minrate)"
+	(( max_rate - runas_rate >= max_rate * 10 / 100 )) ||
+		error "runas processes take all the bandwidth ($max_rate)"
+	(( tbf_minrate - runas_rate <= tbf_minrate * 10 / 100 )) ||
+		error "runas rate ($runas_rate) is lower than tbf the minimum rate ($tbf_minrate)"
+
+	echo "Check tbf realtime minimum rate for uid $RUNAS_ID"
+	do_facet ost1 $LCTL set_param \
+		$ostsvc.nrs_tbf_rule="change\ default\ minrate=$((2 * max_rate))" \
+		$ostsvc.nrs_tbf_rule="stop\ dd_runas" \
+		$ostsvc.nrs_tbf_rule="start\ dd_runas\ uid={$RUNAS_ID}\ minrate=$tbf_minrate\ realtime=1" ||
+		error "Fail to start the realtime rule dd_runas"
+
+	for (( i=0; i <= thmax * 110 / 100; i++ )); do
+		__test_77s_th $dirth2/$tfile-$i "runas -u $RUNAS_ID" & pids+="$! "
+	done
+
+	sleep 5
+	runas_rate=$(__test_77s_get_rate $RUNAS_ID)
+	kill $pids
+
+	echo "Runas recorded rate is $runas_rate (target: $tbf_minrate)"
+	(( max_rate - runas_rate >= max_rate * 10 / 100 )) ||
+		error "runas processes take all the bandwidth ($max_rate)"
+	(( tbf_minrate - runas_rate <= tbf_minrate * 10 / 100 )) ||
+		error "runas rate ($runas_rate) is lower than tbf the minimum rate ($tbf_minrate)"
+}
+run_test 77s "Verify minimum RPC rate under congestion"
+
 test_78() { #LU-6673
 	local rc
 
