@@ -847,6 +847,8 @@ static inline __u32 fid_flatten32(const struct lu_fid *fid)
 	return ino ?: fid_oid(fid);
 }
 
+u32 lu_fid_hash(const void *data, u32 len, u32 seed);
+
 static inline int
 lu_fid_diff(const struct lu_fid *fid1, const struct lu_fid *fid2)
 {
