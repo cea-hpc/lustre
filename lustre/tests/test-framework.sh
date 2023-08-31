@@ -4632,7 +4632,6 @@ stopall() {
 }
 
 cleanup_echo_devs () {
-	trap 0
 	local dev
 	local devs=$($LCTL dl | grep echo | awk '{print $4}')
 
