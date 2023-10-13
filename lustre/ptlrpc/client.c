@@ -1885,7 +1885,7 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
 			 * not corrupt any data.
 			 */
 			if (req->rq_phase == RQ_PHASE_UNREG_RPC &&
-			    ptlrpc_cli_wait_unlink(req))
+			    ptlrpc_client_recv_or_unlink(req))
 				continue;
 			if (req->rq_phase == RQ_PHASE_UNREG_BULK &&
 			    ptlrpc_client_bulk_active(req))
@@ -1923,7 +1923,7 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
 			/*
 			 * Check if we still need to wait for unlink.
 			 */
-			if (ptlrpc_cli_wait_unlink(req) ||
+			if (ptlrpc_client_recv_or_unlink(req) ||
 			    ptlrpc_client_bulk_active(req))
 				continue;
 			/* If there is no need to resend, fail it now. */
@@ -2757,7 +2757,6 @@ EXPORT_SYMBOL(ptlrpc_req_xid);
  */
 static int ptlrpc_unregister_reply(struct ptlrpc_request *request, int async)
 {
-	bool discard = false;
 	/*
 	 * Might sleep.
 	 */
@@ -2772,18 +2771,15 @@ static int ptlrpc_unregister_reply(struct ptlrpc_request *request, int async)
 	/*
 	 * Nothing left to do.
 	 */
-	if (!__ptlrpc_cli_wait_unlink(request, &discard))
+	if (!ptlrpc_client_recv_or_unlink(request))
 		RETURN(1);
 
 	LNetMDUnlink(request->rq_reply_md_h);
 
-	if (discard) /* Discard the request-out callback */
-		__LNetMDUnlink(request->rq_req_md_h, discard);
-
 	/*
 	 * Let's check it once again.
 	 */
-	if (!ptlrpc_cli_wait_unlink(request))
+	if (!ptlrpc_client_recv_or_unlink(request))
 		RETURN(1);
 
 	/* Move to "Unregistering" phase as reply was not unlinked yet. */
@@ -2812,7 +2808,7 @@ static int ptlrpc_unregister_reply(struct ptlrpc_request *request, int async)
 		while (seconds > 0 &&
 		       wait_event_idle_timeout(
 			       *wq,
-			       !ptlrpc_cli_wait_unlink(request),
+			       !ptlrpc_client_recv_or_unlink(request),
 			       cfs_time_seconds(1)) == 0)
 			seconds -= 1;
 		if (seconds > 0) {
