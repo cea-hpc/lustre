@@ -354,6 +354,12 @@ static int vvp_page_make_ready(const struct lu_env *env,
 	int result = 0;
 
 	lock_page(vmpage);
+#ifdef LIBCFS_DEBUG
+	if (!PageUptodate(vmpage)) {
+		CL_PAGE_DEBUG(D_ERROR, env, pg, "PageUptodate(vmpage)\n");
+		LBUG();
+	}
+#endif /* LIBCFS_DEBUG */
 	if (clear_page_dirty_for_io(vmpage)) {
 		LASSERT(pg->cp_state == CPS_CACHED);
 		/* This actually clears the dirty bit in the radix
