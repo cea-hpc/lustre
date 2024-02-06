@@ -300,8 +300,10 @@ sfw_server_rpc_done(struct srpc_server_rpc *rpc)
                 swi_state2str(rpc->srpc_wi.swi_state),
                 status);
 
-        if (rpc->srpc_bulk != NULL)
-                sfw_free_pages(rpc);
+	if (rpc->srpc_bulk) {
+		srpc_free_bulk(rpc->srpc_bulk);
+		rpc->srpc_bulk = NULL;
+	}
 }
 
 static void
@@ -1103,23 +1105,18 @@ sfw_query_batch(struct sfw_batch *tsb, int testidx,
         return -ENOENT;
 }
 
-void
-sfw_free_pages(struct srpc_server_rpc *rpc)
-{
-        srpc_free_bulk(rpc->srpc_bulk);
-        rpc->srpc_bulk = NULL;
-}
-
 int
-sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int npages, int len,
+sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int len,
 		int sink)
 {
 	LASSERT(rpc->srpc_bulk == NULL);
-	LASSERT(npages > 0 && npages <= LNET_MAX_IOV);
+	LASSERT(len > 0 && len <= LNET_MTU);
 
-	rpc->srpc_bulk = srpc_alloc_bulk(cpt, 0, npages, len, sink);
+	rpc->srpc_bulk = srpc_alloc_bulk(cpt, len);
 	if (rpc->srpc_bulk == NULL)
 		return -ENOMEM;
+
+	srpc_init_bulk(rpc->srpc_bulk, 0, len, sink);
 
 	return 0;
 }
@@ -1169,18 +1166,12 @@ sfw_add_test(struct srpc_server_rpc *rpc)
 
         if (request->tsr_is_client && rpc->srpc_bulk == NULL) {
 		/* rpc will be resumed later in sfw_bulk_ready */
-		int	npg = sfw_id_pages(request->tsr_ndest);
 		int	len;
 
-		if ((sn->sn_features & LST_FEAT_BULK_LEN) == 0) {
-			len = npg * PAGE_SIZE;
-
-		} else  {
-			len = sizeof(struct lnet_process_id_packed) *
+		len = sizeof(struct lnet_process_id_packed) *
 			      request->tsr_ndest;
-		}
 
-		return sfw_alloc_pages(rpc, CFS_CPT_ANY, npg, len, 1);
+		return sfw_alloc_pages(rpc, CFS_CPT_ANY, len, 1);
         }
 
         rc = sfw_add_test_instance(bat, rpc);
@@ -1647,10 +1638,9 @@ sfw_startup (void)
 	INIT_LIST_HEAD(&sfw_data.fw_zombie_rpcs);
 	INIT_LIST_HEAD(&sfw_data.fw_zombie_sessions);
 
-        brw_init_test_client();
-        brw_init_test_service();
-        rc = sfw_register_test(&brw_test_service, &brw_test_client);
-        LASSERT (rc == 0);
+	brw_init_test_service();
+	rc = sfw_register_test(&brw_test_service, &brw_test_client);
+	LASSERT(rc == 0);
 
         ping_init_test_client();
         ping_init_test_service();
