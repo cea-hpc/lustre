@@ -752,10 +752,14 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 
 	if (!it_disposition(it, DISP_LOOKUP_NEG)) {
 		/* we have lookup look - unhide dentry */
-		if (bits & MDS_INODELOCK_LOOKUP) {
+		if (bits & MDS_INODELOCK_LOOKUP)
 			d_lustre_revalidate(*de);
-			ll_update_dir_depth(parent, (*de)->d_inode);
-		}
+
+		/* open may not fetch LOOKUP lock, update dir depth/dmv anyway
+		 * in case it's used uninitialized.
+		 */
+		if (S_ISDIR(inode->i_mode))
+			ll_update_dir_depth(parent, d_inode(*de));
 
 		if (encrypt) {
 			rc = llcrypt_get_encryption_info(inode);
