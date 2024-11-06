@@ -627,6 +627,23 @@ struct file *alloc_file_pseudo(struct inode *inode, struct vfsmount *mnt,
 }
 #endif /* !HAVE_ALLOC_FILE_PSEUDO */
 
+extern atomic_t descriptors_cnt;
+extern unsigned int ldiskfs_flush_descriptors_cnt;
+extern struct work_struct flush_fput;
+#define osd_alloc_file_pseudo(inode, mnt, name, flags, fops)		\
+({									\
+	struct file *__f;						\
+	int __descriptors_cnt;						\
+	__f = alloc_file_pseudo(inode, mnt, name, flags, fops);		\
+	__descriptors_cnt = atomic_inc_return(&descriptors_cnt);	\
+	if (unlikely(__descriptors_cnt >= ldiskfs_flush_descriptors_cnt)) {\
+		/* drop here to skip queue_work */			\
+		atomic_set(&descriptors_cnt, 0);			\
+		queue_work(system_long_wq, &flush_fput);		\
+	}								\
+	__f;								\
+})
+
 #ifdef HAVE_INODE_TIMESPEC64
 # define osd_timespec			timespec64
 #else
