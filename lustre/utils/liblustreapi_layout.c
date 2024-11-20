@@ -2936,6 +2936,11 @@ int llapi_mirror_resync_many(int fd, struct llapi_layout *layout,
 	int i;
 	int rc;
 	int rc2 = 0;
+	struct stat st;
+
+	rc = fstat(fd, &st);
+	if (rc < 0)
+		return -errno;
 
 	rc = posix_memalign(&buf, page_size, buflen);
 	if (rc)
@@ -3117,17 +3122,28 @@ do_read:
 	 * reflect its true meaning.
 	 */
 	for (i = 0; i < comp_size; i++) {
-		comp_array[i].lrc_synced = !comp_array[i].lrc_synced;
-		if (comp_array[i].lrc_synced && pos & (page_size - 1)) {
-			rc = llapi_mirror_truncate(fd,
-					comp_array[i].lrc_mirror_id, pos);
-			/* Ignore truncate error on encrypted file without the
-			 * key if tried on LUSTRE_ENCRYPTION_UNIT_SIZE boundary.
-			 */
-			if (rc < 0 && (rc != -ENOKEY ||
-				       pos & ~LUSTRE_ENCRYPTION_MASK))
-				comp_array[i].lrc_synced = false;
+		struct llapi_resync_comp *comp = comp_array + i;
+
+		comp->lrc_synced = !comp->lrc_synced;
+
+		if (!comp->lrc_synced)
+			continue;
+		if (pos < comp->lrc_start || pos >= comp->lrc_end)
+			continue;
+
+		if (pos < st.st_size) {
+			llapi_mirror_punch(fd, comp->lrc_mirror_id, pos,
+					   comp_array[i].lrc_end - pos);
+			continue;
 		}
+
+		rc = llapi_mirror_truncate(fd, comp->lrc_mirror_id, pos);
+		/* Ignore truncate error on encrypted file without the
+		 * key if tried on LUSTRE_ENCRYPTION_UNIT_SIZE boundary.
+		 */
+		if (rc < 0 && (rc != -ENOKEY ||
+			       pos & ~LUSTRE_ENCRYPTION_MASK))
+			comp->lrc_synced = false;
 	}
 
 	/**
