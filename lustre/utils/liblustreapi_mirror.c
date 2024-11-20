@@ -472,7 +472,7 @@ int llapi_mirror_copy(int fd, unsigned int src, unsigned int dst, off_t pos,
 
 	free(buf);
 
-	if (result > 0 && pos & (page_size - 1)) {
+	if (result > 0) {
 		rc = llapi_mirror_truncate(fd, dst, pos);
 		if (rc < 0)
 			result = rc;
