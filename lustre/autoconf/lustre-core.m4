@@ -516,6 +516,27 @@ AC_DEFUN([LC_HAVE_LIBAIO], [
 ]) # LC_HAVE_LIBAIO
 
 #
+# LC_FOP_READDIR
+#
+# Kernel v3.10+ lost readdir
+#
+AC_DEFUN([LC_SRC_FOP_READDIR], [
+	LB2_LINUX_TEST_SRC([fop_readdir], [
+		#include <linux/fs.h>
+	],[
+		struct file_operations fop;
+		fop.readdir = NULL;
+	])
+])
+AC_DEFUN([LC_FOP_READDIR], [
+	AC_MSG_CHECKING([if 'file_operations' has 'readdir'])
+	LB2_LINUX_TEST_RESULT([fop_readdir], [
+		AC_DEFINE(HAVE_FOP_READDIR, 1,
+			[file_operations has readdir])
+	])
+]) # LC_FOP_READDIR
+
+#
 # LC_INVALIDATE_RANGE
 #
 # 3.11 invalidatepage requires the length of the range to invalidate
@@ -4158,6 +4179,7 @@ AC_DEFUN([LC_PROG_LINUX_SRC], [
 	LC_SRC_HAVE_DENTRY_D_U_D_ALIAS_HLIST
 	LC_SRC_HAVE_DENTRY_D_CHILD
 	LC_SRC_PID_NS_FOR_CHILDREN
+	LC_SRC_FOP_READDIR
 
 	# 3.12
 	LC_SRC_OLDSIZE_TRUNCATE_PAGECACHE
@@ -4433,6 +4455,7 @@ AC_DEFUN([LC_PROG_LINUX_RESULTS], [
 	LC_HAVE_DENTRY_D_U_D_ALIAS_HLIST
 	LC_HAVE_DENTRY_D_CHILD
 	LC_PID_NS_FOR_CHILDREN
+	LC_FOP_READDIR
 
 	# 3.12
 	LC_OLDSIZE_TRUNCATE_PAGECACHE
