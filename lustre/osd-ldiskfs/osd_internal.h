@@ -642,7 +642,7 @@ extern struct work_struct flush_fput;
 	__f;								\
 })
 
-#ifdef HAVE_INODE_TIMESPEC64
+#if defined HAVE_INODE_TIMESPEC64 || defined HAVE_INODE_GET_MTIME_SEC
 # define osd_timespec			timespec64
 #else
 # define osd_timespec			timespec
