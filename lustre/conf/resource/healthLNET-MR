@@ -1,0 +1,530 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+#
+#
+#	LNet OCF RA
+#
+
+
+# Description: HA resource agent to monitor Lustre LNet network
+
+#######################################################################
+# Initialization:
+
+: ${OCF_ROOT=/usr/lib/ocf}
+: ${OCF_FUNCTIONS=${OCF_ROOT}/resource.d/heartbeat/.ocf-shellfuncs}
+. ${OCF_FUNCTIONS}
+: ${__OCF_ACTION=$1}
+
+#######################################################################
+
+meta_data() {
+	cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="healthLNET-MR" version="1.0">
+<version>1.0</version>
+
+<longdesc lang="en">
+Every time the monitor action is run, this resource agent checks a LNET network
+(e.g: o2ib) by checking the status for each LNet network interface and recording
+the current number of lnetctl ping nodes the host can connect to.
+The resource create one attribute per network device and one global attribute
+for the network.
+Per interface attributes reflect the LNet health. The global attribute is
+computed using the number of active hosts and active LNet interfaces with the
+following formula:
+score = range * active_hosts * if_active / (if_count * host_count)
+</longdesc>
+<shortdesc lang="en">LNet connectivity</shortdesc>
+
+<parameters>
+
+<parameter name="network" unique="0" required="1">
+<longdesc lang="en">
+LNET network to check.
+</longdesc>
+<shortdesc lang="en">LNET network</shortdesc>
+<content type="string" default=""/>
+</parameter>
+
+<parameter name="name" unique="0">
+<longdesc lang="en">
+The name of the attributes to set.  This is the name to be used in the
+constraints.
+</longdesc>
+<shortdesc lang="en">Attribute name</shortdesc>
+<content type="string" default="$DEF_NAME_PREFIX@{network}"/>
+</parameter>
+
+<parameter name="pidfile" unique="0">
+<longdesc lang="en">PID file</longdesc>
+<shortdesc lang="en">PID file</shortdesc>
+<content type="string" default="$DEF_PIDFILE" />
+</parameter>
+
+<parameter name="dampen" unique="0">
+<longdesc lang="en">
+The time to wait (dampening) further changes occur
+</longdesc>
+<shortdesc lang="en">Dampening interval</shortdesc>
+<content type="integer" default="$DEF_TIMEOUT"/>
+</parameter>
+
+<parameter name="range" unique="0">
+<longdesc lang="en">
+Specify the range of possible values for an attribute.
+The default value is 1000, where 1000 indicates that 100% of the hosts are
+reachable.
+</longdesc>
+<shortdesc lang="en">Attribute value range</shortdesc>
+<content type="integer" default="$DEF_RANGE"/>
+</parameter>
+
+<parameter name="host_list" unique="0">
+<longdesc lang="en">
+The list of ping nodes to count.
+</longdesc>
+<shortdesc lang="en">Host list</shortdesc>
+<content type="string" default=""/>
+</parameter>
+
+<parameter name="timeout" unique="0">
+<longdesc lang="en">
+How long, in seconds, to wait before declaring a ping lost
+</longdesc>
+<shortdesc lang="en">ping timeout in seconds</shortdesc>
+<content type="integer" default="$DEF_TIMEOUT"/>
+</parameter>
+
+<parameter name="failure_score" unique="0">
+<longdesc lang="en">
+Resource is failed if the score is less than failure_score.
+Default never fails.
+</longdesc>
+<shortdesc lang="en">failure score</shortdesc>
+<content type="integer" default="$DEF_FAILURE_SCORE"/>
+</parameter>
+
+<parameter name="debug" unique="0">
+<longdesc lang="en">
+Enables to use default attrd_updater verbose logging on every call.
+</longdesc>
+<shortdesc lang="en">Verbose logging</shortdesc>
+<content type="string" default="$DEF_DEBUG"/>
+</parameter>
+
+<parameter name="discover" unique="0">
+<longdesc lang="en">
+LNet discovery for each host on resource start.
+</longdesc>
+<shortdesc lang="en">Discover hosts on start</shortdesc>
+<content type="string" default="$DEF_DISCOVER"/>
+</parameter>
+
+<parameter name="min_health" unique="0">
+<longdesc lang="en">
+If the LNet health value falls below this minimum threshold, the LNet interface
+is considered down.
+</longdesc>
+<shortdesc lang="en">Minimum LNET health value</shortdesc>
+<content type="integer" default="$DEF_MIN_HEALTH"/>
+</parameter>
+
+</parameters>
+
+<actions>
+<action name="start"   timeout="300s" />
+<action name="stop"    timeout="300s" />
+<action name="reload"  timeout="300s" />
+<action name="monitor" depth="0"  timeout="300s" interval="20s"/>
+<action name="meta-data"  timeout="5" />
+<action name="validate-all"  timeout="30" />
+</actions>
+</resource-agent>
+END
+}
+
+#######################################################################
+
+lnet_usage() {
+	cat <<END
+usage: $(basename "$0") {start|stop|monitor|migrate_to|migrate_from|validate-all|meta-data}
+
+Expects to have a fully populated OCF RA-compliant environment set.
+END
+}
+
+lnet_conditional_log() {
+	local level=$1
+	shift
+
+	if ocf_is_true ${OCF_RESKEY_debug}; then
+		ocf_log $level "$*"
+	fi
+}
+
+pipe_log() {
+	local function=$1
+	local level=$2
+	local log
+
+	while read log; do
+		$function $level "$log"
+	done
+}
+
+lnetctl_err_filter() {
+	awk '/descr:/ {print $0}' | cut -d ":" -f2-
+}
+
+lnetctl_exec() {
+	local cmd=$@
+	local err=$OCF_SUCCESS
+	local rc=0
+	local str
+
+	str=$($cmd 2>&1) || rc=$?
+
+	lnetctl_err_filter <<< "$str" | pipe_log ocf_log err
+	case $rc in
+		0)	err=$OCF_SUCCESS;;
+		124)
+			ocf_log err "'$cmd' timeout"
+			err=$OCF_ERR_GENERIC
+			;;
+		*)	err=$OCF_ERR_GENERIC;;
+	esac
+
+	return $err
+}
+
+lnetctl_hosts() {
+	local cmd_prefix=$1
+	local succeed=0
+	local pids pid
+	local host
+	local rc=$OCF_SUCCESS
+
+	for host in "${HOSTS[@]}"; do
+		local cmd="$cmd_prefix $host"
+
+		lnetctl_exec $cmd & pids+="$! "
+	done
+
+	for pid in $pids; do
+		wait $pid; rc=$?
+		(( rc == OCF_SUCCESS )) || continue
+
+		((succeed++))
+	done
+	echo $succeed
+
+	return $OCF_SUCCESS
+}
+
+lnetctl_ping() {
+	lnetctl_hosts "lnetctl ping --timeout $OCF_RESKEY_timeout" ||
+		return $?
+
+	return 0
+}
+
+lnetctl_discover() {
+	lnetctl_hosts "timeout $OCF_RESKEY_timeout lnetctl discover" > /dev/null ||
+		return $?
+
+	return $OCF_SUCCESS
+}
+
+load_lustre() {
+	! [[ -d /sys/module/lustre ]] || return $OCF_SUCCESS
+
+	if ! modprobe lustre; then
+		ocf_log err "Failed to load 'lustre': rc = $?"
+		return $OCF_ERR_INSTALLED
+	fi
+}
+
+lnet_validate() {
+	local dir=$(dirname "$OCF_RESKEY_pidfile")
+
+	if ! [[ -w "$dir" ]] || ! [[ -x "$dir" ]]; then
+		ocf_log err "Invalid location for 'pidfile': $dir is not writable"
+		return $OCF_ERR_CONFIGURED
+	fi
+
+	if ! [[ "$OCF_RESKEY_pidfile" =~ ^/.* ]]; then
+		ocf_log err "You should use an absolute path for pidfile not: $OCF_RESKEY_pidfile"
+		return $OCF_ERR_ARGS
+	fi
+
+	local host
+	for host in "${HOSTS[@]}"; do
+		if ! [[ "$host" =~ [^\ ]+@[a-z0-9]+ ]]; then
+			ocf_log err "Invalid host NID: $host"
+			return $OCF_ERR_ARGS
+		fi
+	done
+
+	check_binary lnetctl
+
+	return $OCF_SUCCESS
+}
+
+lnet_start() {
+	lnet_validate || return $?
+	lnet_conditional_log debug "Starting resource for '$OCF_RESKEY_network'"
+	load_lustre || return $?
+
+	parse_network_conf > /dev/null || return $?
+	ocf_is_true $OCF_RESKEY_discover && lnetctl_discover || true
+	lnet_update || return $?
+
+	if ! touch $OCF_RESKEY_pidfile; then
+		ocf_log err "Failed to create pidfile: $OCF_RESKEY_pidfile"
+		return $OCF_ERR_GENERIC;
+	fi
+
+	return $OCF_SUCCESS
+}
+
+lnet_stop() {
+	local conf
+
+	# global attribute
+	attrd_updater -D -n $OCF_RESKEY_name -d $OCF_RESKEY_dampen $attrd_options
+
+	# attributes per interface
+	conf=$(parse_network_conf) ||
+		(( $? != OCF_NOT_RUNNING )) || return $OCF_SUCCESS
+
+	local if_nid if_status if_health iface
+	while read if_nid if_status if_health iface; do
+		local attr_name="$OCF_RESKEY_name-$iface"
+
+		attrd_updater -D -n $attr_name -d $OCF_RESKEY_dampen $attrd_options
+	done <<< "$conf"
+
+	unlink $OCF_RESKEY_pidfile
+
+	return $OCF_SUCCESS
+}
+
+lnet_attr_updater() {
+	local name=$1
+	local score=$2
+	local rc=0
+
+	attrd_updater -n $name -v $score -d $OCF_RESKEY_dampen $attrd_options ||
+		rc=$?
+	if (( rc != 0 )); then
+		ocf_log warn "Could not update $name = $score: rc=$rc"
+		return $rc
+	fi
+
+	lnet_conditional_log debug "Updated $name = $score"
+
+	return $OCF_SUCCESS
+}
+
+parse_network_conf() {
+	local net_out
+	local awkcmd
+
+	if ! [[ -d /sys/module/lnet ]]; then
+		ocf_log err "LNet module is not loaded"
+		return $OCF_NOT_RUNNING
+	fi
+
+	awkcmd+='$1 ~ /-[ ]*nid/ {nid=$2}'
+	awkcmd+='$1 ~ /status/ {status[nid]=$2}'
+	awkcmd+='$1 ~ /health value/ {health[nid]=$2}'
+	awkcmd+='$1 ~ /interfaces/ {iface[nid]=""}'
+	awkcmd+='$1 ~ /[0-9]+/ {if (nid in iface) iface[nid]=iface[nid] "_" $2; }'
+	awkcmd+='END {for (nid in status)'
+	awkcmd+='print nid,status[nid],health[nid],substr(iface[nid],2)}'
+
+	net_out=$(lnetctl net show --net $OCF_RESKEY_network  -v 2 2>&1)
+	if (( $? != 0 )); then
+		lnetctl_err_filter <<< "$net_out" | pipe_log ocf_log err
+		return $OCF_NOT_RUNNING
+	elif [[ -z "$net_out" ]]; then
+		ocf_log err "LNet network '$OCF_RESKEY_network' is not started"
+		return $OCF_NOT_RUNNING
+	fi
+
+	awk -F ': ' "$awkcmd" <<< "$net_out"
+}
+
+iface_state() {
+	local devices="${1//_/ }"
+	local device
+
+
+	for device in $devices; do
+		local carrier=/sys/class/net/$device/carrier
+		local operstate=/sys/class/net/$device/operstate
+
+		[[ -f $carrier ]] || return 1
+		[[ "$(cat $carrier)" == 1 ]] || return 1
+		[[ "$(cat $operstate)" == "up" ]] || return 1
+	done
+
+	return 0
+}
+
+lnet_update() {
+	local range=$OCF_RESKEY_range
+	local conf
+
+	conf=$(parse_network_conf) || return $?
+
+	# attributes per interface
+	local if_count if_active
+	local if_nid if_status if_health iface
+	while read if_nid if_status if_health iface; do
+		local attr_name="$OCF_RESKEY_name-$iface"
+
+		(( if_count++ ))
+		if [[ "$if_status" != "up" ]] || ! iface_state "$iface"; then
+			ocf_log err "$iface (nid: $if_nid) is down"
+			lnet_attr_updater $attr_name 0 || return $?
+			continue;
+		fi
+
+		lnet_attr_updater $attr_name $((if_health * range / 1000)) ||
+			return $?
+
+		if ((if_health < OCF_RESKEY_min_health)); then
+			ocf_log err "Degraded LNET health for $iface (nid: $if_nid): $if_health < $OCF_RESKEY_min_health "
+			lnet_attr_updater $attr_name 0 || return $?
+			continue;
+		fi
+
+		(( if_active++ ))
+	done <<< "$conf"
+
+	# global attribute
+	local global_score=$range
+	if ((!if_active)); then
+		global_score=0
+	elif (( ${#HOSTS[@]} > 0 )); then
+		local active
+
+		active=$(lnetctl_ping) || return $?
+		(( global_score = range * active / ${#HOSTS[@]} ))
+	fi
+	(( global_score = global_score * if_active / if_count ))
+	(( global_score > 0)) ||
+		ocf_log err "LNet connection failed please check"
+
+	lnet_attr_updater $OCF_RESKEY_name $global_score || return $?
+	if [[ -n "$OCF_RESKEY_failure_score" ]] && (( global_score < OCF_RESKEY_failure_score )); then
+		ocf_log warn "$OCF_RESKEY_name is less than failure_score($OCF_RESKEY_failure_score)"
+		return $OCF_ERR_GENERIC
+	fi
+
+	return $OCF_SUCCESS;
+}
+
+lnet_monitor() {
+	[[ -f "$OCF_RESKEY_pidfile" ]] || return $OCF_NOT_RUNNING
+	lnet_update || return $?
+
+	return $OCF_SUCCESS;
+}
+
+check_bool_param() {
+	local name=$1
+	local default=$2
+	local param=OCF_RESKEY_$name
+
+	case "${!param}" in
+		true|True|TRUE|1) eval "$param=true";;
+		false|False|FALSE|0) eval "$param=false";;
+		"") eval "$param=$default";;
+		*)
+			ocf_log warn "Value for '$name' is incorrect. Please specify 'true' or 'false' not: ${!param}"
+			eval "$param=$default"
+			;;
+	esac
+}
+
+check_int_param() {
+	local name=$1
+	local default=$2
+	local min=$3
+	local max=$4
+	local param=OCF_RESKEY_$name
+	local val=${!param}
+
+	[[ -n "$val" ]] || val=$default
+
+	if ! [[ "$val" =~ [-0-9]+ ]]; then
+		ocf_log err "Invalid value for '$name' parameter: value '$val' is not an integer"
+		val=$default
+	fi
+
+	if [[ -n "$min" ]] && (( val < min )); then
+		ocf_log warn "Invalid value for '$name' parameter: value $((val)) < $min"
+		val=$min
+	fi
+
+	if [[ -n "$max" ]] && (( val > max )); then
+		ocf_log warn "Invalid value for '$name' parameter: value $((val)) > $max"
+		val=$max
+	fi
+
+	eval "$param=$val"
+}
+
+
+# Defaults
+MAX_TIMEOUT=300
+DEF_NAME_PREFIX="lnetd"
+DEF_PIDFILE="$HA_VARRUN/ocf_${OCF_RESOURCE_INSTANCE}"
+DEF_TIMEOUT=5
+DEF_RANGE=1000
+DEF_MIN_HEALTH=1000
+DEF_FAILURE_SCORE=0
+DEF_DEBUG=false
+DEF_DISCOVER=true
+
+declare -a HOSTS=( ${OCF_RESKEY_host_list//,/ } )
+: ${OCF_RESKEY_name:="${DEF_NAME_PREFIX}@${OCF_RESKEY_network}"}
+: ${OCF_RESKEY_pidfile:=$DEF_PIDFILE}
+
+check_int_param timeout $DEF_TIMEOUT 1 $MAX_TIMEOUT
+check_int_param dampen $DEF_TIMEOUT 1 $MAX_TIMEOUT
+check_int_param range $DEF_RANGE 1
+check_int_param min_health $DEF_MIN_HEALTH 0 1000
+check_int_param failure_score $DEF_FAILURE_SCORE 0 $OCF_RESKEY_range
+check_bool_param debug $DEF_DEBUG
+check_bool_param discover $DEF_DISCOVER
+
+attrd_options='-q'
+if ocf_is_true ${OCF_RESKEY_debug} ; then
+	attrd_options=''
+fi
+
+case $__OCF_ACTION in
+	meta-data)    meta_data
+		exit $OCF_SUCCESS
+		;;
+	start)		lnet_start;;
+	stop)		lnet_stop;;
+	monitor)	lnet_monitor;;
+	reload)		lnet_start;;
+	validate-all)	lnet_validate;;
+	usage|help)	lnet_usage
+		exit $OCF_SUCCESS
+		;;
+	*)
+		lnet_usage
+		exit $OCF_ERR_UNIMPLEMENTED
+		;;
+esac
+rc=$?
+lnet_conditional_log debug "${OCF_RESOURCE_INSTANCE} $__OCF_ACTION : $rc"
+exit $rc
