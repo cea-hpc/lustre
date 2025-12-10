@@ -8,9 +8,9 @@
 # This file is part of Lustre, http://www.lustre.org/
 #
 
-EXTRA_DIST = Lustre healthLNET healthLUSTRE
+EXTRA_DIST = Lustre healthLNET healthLUSTRE healthLNET-MR
 
 if SERVER
 pacemakerdir = $(prefix)/lib/ocf/resource.d/lustre
-pacemaker_SCRIPTS = healthLNET healthLUSTRE Lustre
+pacemaker_SCRIPTS = healthLNET healthLUSTRE healthLNET-MR Lustre
 endif
