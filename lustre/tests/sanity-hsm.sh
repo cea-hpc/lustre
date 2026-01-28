@@ -5441,7 +5441,6 @@ test_407() {
 	md5sum $f2 &
 	sleep 2
 
-	do_facet $SINGLEMDS "$LCTL get_param $HSM_PARAM.actions"
 	# after umount hsm_actions->O/x/x log shouldn't have
 	# double RESTORE records like below
 	#[0x200000401:0x1:0x0]...0x58d03a0d/0x58d03a0c action=RESTORE...WAITING
@@ -5449,12 +5448,9 @@ test_407() {
 	sleep 30 &&
 		do_facet $SINGLEMDS "$LCTL get_param $HSM_PARAM.actions"&
 	fail $SINGLEMDS
-	do_facet $SINGLEMDS $LCTL set_param fail_loc=0
-
-	do_facet $SINGLEMDS "$LCTL get_param $HSM_PARAM.actions"
 
 	copytool_continue
-	wait_all_done 100 $fid
+	wait_request_state $fid RESTORE SUCCEED
 }
 run_test 407 "Check for double RESTORE records in llog"
 
